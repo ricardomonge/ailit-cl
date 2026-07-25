@@ -1,7 +1,7 @@
 ---
 title: "Psychometric Validation of the AI Literacy Scale for Chilean University Students"
 subtitle: "Adaptation of Han & Zhang (2025) — Quantitative Analysis Pipeline"
-author: "Research Team"
+author: "Ricardo Monge-Rogel"
 date: "`r Sys.Date()`"
 output:
   html_document:
