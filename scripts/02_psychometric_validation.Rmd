@@ -1,7 +1,7 @@
 ---
 title: "Psychometric Validation of the AI Literacy Scale for Chilean University Students"
 subtitle: "Adaptation of Han & Zhang (2025) — Quantitative Analysis Pipeline (v3, revised)"
-author: "Research Team"
+author: "Ricardo Monge-Rogel"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -44,39 +44,6 @@ AI Literacy scale adapted for Chilean university students, based on Han & Zhang 
 **Estimator (CFA):** WLSMV (ordinal data with multivariate non-normality)
 **Sample split:** 50/50 EFA / CFA, seed = 2024
 
-**REVISION NOTES (v3)** — fixes after first v2 render:
-
-1. `print()` wrapped around every `kable()` inside `if{}`/loops — in v2 the
-   invariance table, model-comparison table and criterion-validity tables were
-   computed but never displayed.
-2. `PCDimension` added to packages (its absence aborted the n_factors consensus).
-3. **New chunk `efa-63items-iterative`**: iterative purification trajectory,
-   compared against the declared 53-item set; prints the rationale required for
-   Methods when declared/empirical decisions diverge (IA.A03, IA.E12, IA.A10–A12).
-4. `comp_table` (Table 1 source) and the iterative purification log now exported
-   to Excel.
-
-**REVISION NOTES (v2)** — changes vs. v1, agreed in editorial review:
-
-1. EFA, KMO, Bartlett, parallel analysis and factor-retention consensus now run on
-   **polychoric** correlations with **minres** extraction (was: Pearson + PAF),
-   matching the Methods section of the manuscript.
-2. **New Step 7c**: EFA on the full **63-item** pool, generating the item-elimination
-   table programmatically (previously the elimination step was undocumented in code).
-3. `items_eliminated` corrected to **10** items (IA.A03 was missing from the vector).
-4. Reliability: **ordinal alpha** (polychoric) + **categorical omega** from the WLSMV
-   CFA solution via `semTools::compRelSEM()` (was: Pearson alpha + ad-hoc omega).
-5. HTMT computed with `ordered = all_items` (polychoric), matching Methods.
-6. Fit table now reports **scaled and unscaled χ²** with explicit labels; SRMR
-   standardized to lavaan's `srmr` everywhere (manuscript must cite ONE value).
-7. Measurement invariance re-implemented with `semTools::measEq.syntax()` under
-   **WLSMV / theta / Wu & Estabrook (2016)** identification, with automatic collapsing
-   of empty response categories; MLR sequence retained only as documented fallback.
-8. Mardia test note clarified (random subsample of 500 from the TOTAL sample).
-9. Criterion-variable comments corrected: scale is **Likert 1–4** (per questionnaire);
-   ceiling-effect note now computed from the data, not hard-coded.
-10. Hard-coded values in notes and in the Figure 2 path diagram replaced by dynamic
-    values pulled from fitted objects (prevents text–output divergence).
 
 **Key methodological references:**
 
@@ -488,13 +455,6 @@ if (length(discrepancy) == 0) {
 ```
 
 ```{r efa-63items-iterative}
-# [v3 NEW] ITERATIVE purification check.
-# The single-pass flags above are sensitive to the item set: an item can be a
-# cross-loader in the 63-item solution and clean once the worst offenders are
-# removed (and vice versa). Standard practice is to purify ITERATIVELY:
-# remove the single worst item, refit, re-evaluate, repeat until clean.
-# This chunk documents that trajectory and compares its endpoint with the
-# declared list. IA.I03 is protected by the documented exception.
 
 iterate_purify <- function(data63, protect = "IA.I03", max_iter = 15) {
   items_now <- colnames(data63)
