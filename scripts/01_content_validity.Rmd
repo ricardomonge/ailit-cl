@@ -1,7 +1,7 @@
 ---
 title: "Content Validity Analysis of the AI Literacy Scale"
 subtitle: "Expert Judgment Using Aiken's V — AI Literacy Scale Adaptation"
-author: "Research Team"
+author: "Ricard Monge-Rogel"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -490,44 +490,6 @@ if (nrow(items_low_v) > 0) {
 
 saveWorkbook(wb_cv, "resultados_validacion_contenido.xlsx", overwrite = TRUE)
 cat("Results exported: resultados_validacion_contenido.xlsx\n")
-```
-
----
-
-# Step 8 — Text for Paper
-
-```{r paper-text}
-# ---------------------------------------------------------------------------
-# Auto-generate text for the Methods section based on computed results
-# ---------------------------------------------------------------------------
-
-n_judges    <- nrow(df)
-n_items_rel <- nrow(tabla_relevance)
-n_items_wor <- nrow(tabla_wording)
-v_mean_rel  <- round(mean(tabla_relevance$V), 3)
-v_mean_wor  <- round(mean(tabla_wording$V), 3)
-v_min_rel   <- round(min(tabla_relevance$V), 3)
-v_min_wor   <- round(min(tabla_wording$V), 3)
-pct_rel     <- round(100 * mean(tabla_relevance$V >= .80), 1)
-pct_wor     <- round(100 * mean(tabla_wording$V >= .80), 1)
-
-cat("=== SUGGESTED TEXT FOR METHODS SECTION ===\n\n")
-cat(paste0(
-  "Content validity was assessed through expert judgment by ", n_judges,
-  " specialists in educational technology, artificial intelligence, and psychometrics. ",
-  "Each expert rated all ", n_items_rel, " items on two dimensions",
-  " (relevance and wording) using a 4-point scale (1 = strongly disagree, 4 = strongly agree). ",
-  "Agreement was quantified using Aiken's V coefficient (Aiken, 1985) ",
-  "with 95% asymmetric confidence intervals (Penfield & Giacobbi, 2004). ",
-  "The recommended threshold was V >= .80 (Merino-Soto & Livia-Segovia, 2009).\n\n",
-  "Results indicated strong expert agreement on both dimensions. ",
-  "For relevance, Aiken's V ranged from ", v_min_rel, " to 1.000 (M = ", v_mean_rel, "), ",
-  "with ", pct_rel, "% of items meeting the V >= .80 criterion. ",
-  "For wording, V ranged from ", v_min_wor, " to 1.000 (M = ", v_mean_wor, "), ",
-  "with ", pct_wor, "% of items meeting the threshold. ",
-  "Items below the criterion were reviewed qualitatively based on expert ",
-  "comments prior to the exploratory factor analysis.\n"
-))
 ```
 
 ---
