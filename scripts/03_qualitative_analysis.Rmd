@@ -1,7 +1,7 @@
 ---
 title: "AI-Assisted Qualitative Analysis and Mixed Methods Triangulation"
 subtitle: "AI Literacy Scale Validation — Chilean University Students"
-author: "Research Team"
+author: "Ricardo Monge-Rogel"
 date: "`r Sys.Date()`"
 output:
   html_document:
