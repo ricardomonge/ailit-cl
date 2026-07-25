@@ -1,6 +1,6 @@
 ---
 title: "AI-Assisted Qualitative Analysis and Mixed Methods Triangulation"
-subtitle: "AI Literacy Scale Validation — Chilean University Students (v3, revised)"
+subtitle: "AI Literacy Scale Validation — Chilean University Students"
 author: "Research Team"
 date: "`r Sys.Date()`"
 output:
@@ -40,37 +40,6 @@ pre-generated Excel files produced by `00_codificacion_api.R`:
 
 **Do NOT re-run the API coding here. Use `00_codificacion_api.R` for that.**
 
-**REVISION NOTES (v3) — fixes after first v2 render:**
-
-1. **Figure 3 profile labels assigned by CONTENT, not class number.** poLCA reordered
-   the classes between runs, which had cross-mapped all four labels. `label_class()`
-   now derives each label from its conditional-probability signature (D1/D2/D3/D4/E2/E5),
-   with a guard that stops on duplicate labels. Class numbers are arbitrary; profiles
-   are identified by signature.
-2. Removed the obsolete hard-coded "Class 3 = 7.8%" diagnostic line (the smallest
-   class is now reported dynamically).
-
-**REVISION NOTES (v2) — agreed in editorial review:**
-
-1. **E5 derived identically for both raters** before IRR. In v1 the human coder had
-   0 cases of E5 (its column was absent/blank), making the kappa of the category that
-   anchors the "ethical paradox" (86.9%) non-computable. E5 is now computed as the
-   complement of E1–E4 for BOTH model and human, restoring a valid kappa.
-2. **Consent filter fixed**: `c("Si", "Sí")` (v1 had `c("Si","Si")`, dropping accented
-   responses and risking an N mismatch with the quantitative pipeline).
-3. **Class 3 percentage**: reported from modal assignment (`table(modal_class)`), not
-   from mixing proportions — fixes the 7.8% → 7.6% rounding and the 100.2% sum.
-4. **Welch ANOVA effect size** (ω²) added; the score ANOVA and the ethics-mention
-   frequency test are reported as SEPARATE analyses (they were conflated in the text).
-5. **LCA indicator selection** documented with an explicit, reproducible rule; the
-   2–5 class range is scanned (was 2–4) so the 4-class choice is defensible.
-6. **Triangulation** uses the SAME FDR family as Step 6 and reports the corrected
-   p-values; the narrative consequence (Ethics converges via D1) is flagged in-output.
-7. `print()` wrapped around every `kable()` inside `if{}`/loops (v1 silently dropped
-   the Step 5 and Step 7 tables).
-8. Figure 3 values are pulled DYNAMICALLY from the fitted LCA + score table (v1 had a
-   hard-coded data.frame that could drift, incl. the 7.8% error and BIC=3446.9 caption).
-
 ---
 
 # Step 0 — Packages
@@ -103,8 +72,8 @@ cats_E <- c("E1","E2","E3","E4","E5")
 cats_D <- c("D1","D2","D3","D4")
 all_cats <- c(cats_B, cats_L, cats_E, cats_D)
 
-# [v2] DERIVE E5 ("no ethical mention") as the complement of E1-E4, so the
-# definition is identical for model and human and never silently blank.
+# E5 ("no ethical mention") is derived as the complement of E1-E4, so the
+# definition is identical for model and human raters.
 # Reference for residual-category handling: documented in Methods.
 derive_E5 <- function(df) {
   e_present <- rowSums(df[, c("E1","E2","E3","E4")], na.rm = TRUE) > 0
@@ -130,7 +99,6 @@ datos_raw <- read.csv("data/dataframe.csv",
                       stringsAsFactors = FALSE,
                       fileEncoding     = "UTF-8",
                       sep              = ";")
-# [v2] consent filter fixed: include accented "Sí" (v1 had c("Si","Si"))
 datos_txt <- datos_raw[datos_raw$Consentimiento %in% c("Si", "Sí"), ]
 datos_txt <- datos_txt[!is.na(datos_txt$experiencia) &
                          nchar(trimws(datos_txt$experiencia)) > 10, ]
@@ -191,9 +159,8 @@ ids_ok     <- intersect(irr_modelo$id_respuesta, irr_human$id_respuesta)
 irr_modelo <- irr_modelo[match(ids_ok, irr_modelo$id_respuesta), ]
 irr_human  <- irr_human[ match(ids_ok, irr_human$id_respuesta),  ]
 
-# [v2] Derive E5 IDENTICALLY for both raters before computing kappa.
-# In v1 the human E5 column was effectively empty (0 cases) while the model had 82,
-# making E5 non-computable and leaving the 86.9% "ethical paradox" without IRR support.
+# Derive E5 identically for both raters before computing kappa, so that the
+# category anchoring the 86.9% "ethical paradox" has valid inter-rater support.
 if (all(c("E1","E2","E3","E4") %in% names(irr_modelo))) {
   irr_modelo$E5 <- derive_E5(irr_modelo)
 }
@@ -240,7 +207,7 @@ kappa_results <- do.call(rbind, lapply(all_cats, function(cat) {
     warning = function(w) suppressWarnings(
       kappa2(cbind(model_col, as.integer(human_col)))$value))
 
-  # [v2] Landis & Koch (1977) labels — consistent with the cited cutoffs
+  # Landis & Koch (1977) labels — consistent with the cited cutoffs
   status <- ifelse(is.na(k), "error",
             ifelse(k>=.81,"Almost perfect",
             ifelse(k>=.61,"Substantial",
@@ -255,14 +222,13 @@ kappa_results <- do.call(rbind, lapply(all_cats, function(cat) {
 kable(kappa_results, caption="Cohen's kappa by category (Landis & Koch, 1977)",
       row.names=FALSE)
 
-# [v2] Group means. NOTE: cats_observable / cats_interpret are a reporting choice;
-# they must (a) cover only computable categories and (b) match what the manuscript
-# describes. D3 is computable now; it is NOT in either group below — decide and
-# document. Categories with NA kappa are excluded from every mean by construction.
+# Group means. NOTE: cats_observable / cats_interpret are a reporting choice;
+# they must cover only computable categories and match what the manuscript
+# describes. Categories with NA kappa are excluded from every mean by construction.
 kappas_valid    <- kappa_results$Kappa[!is.na(kappa_results$Kappa)]
 kappa_mean      <- mean(kappas_valid)
 cats_observable <- c("B1","B3","B4","B5","L1","L2","L3","L4")
-cats_interpret  <- c("B2","D1","D2","E2")   # [v2] B6 dropped (NA kappa: no variance)
+cats_interpret  <- c("B2","D1","D2","E2")   # B6 excluded (NA kappa: no variance)
 
 k_obs <- mean(kappa_results$Kappa[kappa_results$Code %in% cats_observable], na.rm=TRUE)
 k_int <- mean(kappa_results$Kappa[kappa_results$Code %in% cats_interpret],  na.rm=TRUE)
@@ -284,7 +250,7 @@ kable(group_summary, caption="Kappa by category group", row.names=FALSE)
 cat(sprintf("\nMean kappa (n=%d calculable): %.3f (%s)\n",
             length(kappas_valid), kappa_mean, lab_band(kappa_mean)))
 cat("Reference: Landis & Koch (1977)\n")
-cat("\n[v2] Report E5 kappa explicitly in text: it underpins the 86.9% 'no ethical\n")
+cat("\nReport E5 kappa explicitly in text: it underpins the 86.9% 'no ethical\n")
 cat("mention' finding. Value below (if computable):\n")
 e5_k <- kappa_results$Kappa[kappa_results$Code == "E5"]
 cat(sprintf("  E5 kappa = %s\n", ifelse(length(e5_k) && !is.na(e5_k), sprintf("%.3f", e5_k),
@@ -367,20 +333,20 @@ if (length(items_found) > 40) {
     d_cohen <- (mean(coded_scores$Score_Total[coded_scores$D1==1],na.rm=TRUE)-
                 mean(coded_scores$Score_Total[coded_scores$D2==1],na.rm=TRUE))/sd_pool
 
-    print(kable(data.frame(Group=c("D1 — Reflective","D2 — Instrumental"),   # [v2] print()
+    print(kable(data.frame(Group=c("D1 — Reflective","D2 — Instrumental"),
                      n=c(n_d1,n_d2),
                      M_Total=round(c(mean(coded_scores$Score_Total[coded_scores$D1==1],na.rm=TRUE),
                                      mean(coded_scores$Score_Total[coded_scores$D2==1],na.rm=TRUE)),2)),
           caption="Scores by usage type", row.names=FALSE))
 
-    # [v2] Welch t-test is the default of t.test(); label it as such.
+    # Welch t-test is the default of t.test(); label it as such.
     cat(sprintf("\nWelch t(%.0f) = %.2f, p = %.3f | Cohen's d = %.3f (%s)\n",
                 t_res$parameter, t_res$statistic, t_res$p.value, d_cohen,
                 ifelse(abs(d_cohen)>=.80,"large",ifelse(abs(d_cohen)>=.50,"medium","small"))))
 
     dim_scores <- c("Score_Knowledge","Score_Ethics","Score_Attitude",
                     "Score_Application","Score_Innovation")
-    print(kable(do.call(rbind, lapply(dim_scores, function(d)   # [v2] print()
+    print(kable(do.call(rbind, lapply(dim_scores, function(d)
       data.frame(Dimension=gsub("Score_","",d),
                  M_D1=round(mean(coded_scores[[d]][coded_scores$D1==1],na.rm=TRUE),2),
                  M_D2=round(mean(coded_scores[[d]][coded_scores$D2==1],na.rm=TRUE),2),
@@ -441,7 +407,7 @@ kable(conv_results,
                       nrow(conv_results)),
       row.names=FALSE)
 cat("\n* Significant after FDR (alpha = .05)\n")
-cat(sprintf("[v3] FDR family size (this step) = %d (extended convergent validity).\n",
+cat(sprintf("FDR family size (this step) = %d (extended convergent validity).\n",
             nrow(conv_results)))
 cat("Triangulation (Step 9) uses its own FDR family of 5 comparisons (the five\n")
 cat("dimensions); this extended convergent validity uses a separate family of 8.\n")
@@ -465,16 +431,16 @@ if ("Sexo" %in% names(coded_socio)) {
     Usage = ifelse(coded_sex$D1==1,"Reflective",
             ifelse(coded_sex$D2==1,"Instrumental","Other/Mixed")),
     Sex   = coded_sex$Sexo)
-  print(kable(as.data.frame.matrix(tab_sex),                       # [v2] print()
+  print(kable(as.data.frame.matrix(tab_sex),
         caption="Usage type by sex (absolute frequencies)"))
-  print(kable(round(prop.table(tab_sex, margin=2)*100,1),          # [v2] print()
+  print(kable(round(prop.table(tab_sex, margin=2)*100,1),
         caption="Usage type by sex (column %)"))
   set.seed(2024)
   fisher_res <- tryCatch(fisher.test(tab_sex,simulate.p.value=TRUE,B=10000),
                          error=function(e) NULL)
   if (!is.null(fisher_res)) {
     cat(sprintf("\nFisher exact (B=10,000): p = %.3f\n", fisher_res$p.value))
-    cat(sprintf("[v2] Conclusion to report: usage type %s by sex.\n",
+    cat(sprintf("Conclusion to report: usage type %s by sex.\n",
                 ifelse(fisher_res$p.value < .05,
                        "DIFFERS significantly", "does NOT differ significantly")))
     cat("Do NOT tie this result to measurement invariance (separate analysis).\n")
@@ -482,15 +448,15 @@ if ("Sexo" %in% names(coded_socio)) {
 }
 
 # ---- 7b. Ethics-MENTION frequency by study area (proportion test) --------
-# [v2] This is a FREQUENCY analysis (proportion of E1/E2 mentions). It is
-# DISTINCT from the score-based ANOVA in 7c; the manuscript conflated them.
+# This is a frequency analysis (proportion of E1/E2 mentions), distinct from
+# the score-based ANOVA in 7c.
 if ("Clasificacion" %in% names(coded_socio)) {
   coded_socio$mentions_ethics <- as.integer(coded_socio$E1==1 | coded_socio$E2==1)
   eth_area <- data.frame(
     Area = names(tapply(coded_socio$mentions_ethics, coded_socio$Clasificacion, mean, na.rm=TRUE)),
     Pct  = round(tapply(coded_socio$mentions_ethics, coded_socio$Clasificacion, mean, na.rm=TRUE)*100,1),
     n    = as.integer(tapply(coded_socio$mentions_ethics, coded_socio$Clasificacion, length)))
-  print(kable(eth_area[order(-eth_area$Pct),], row.names=FALSE,    # [v2] print()
+  print(kable(eth_area[order(-eth_area$Pct),], row.names=FALSE,
         caption="Ethics mention (E1+E2) frequency by study area"))
 
   # Global test of independence between ethics mention and area (frequencies)
@@ -502,7 +468,7 @@ if ("Clasificacion" %in% names(coded_socio)) {
     cat(sprintf("\nEthics-mention frequency x area: chi2(%d) = %.2f, p = %.3f; ",
                 chisq_eth$parameter, chisq_eth$statistic, chisq_eth$p.value))
     cat(sprintf("Fisher (B=10,000) p = %.3f\n", fish_eth$p.value))
-    cat("[v2] Report THIS as the frequency analysis (e.g., 14.2%% vs 3.0%% across areas).\n")
+    cat("Report this as the frequency analysis (e.g., 14.2%% vs 3.0%% across areas).\n")
   }
 
   # ---- 7c. Ethics SCORE by area (ANOVA / Welch + effect size) ------------
@@ -525,7 +491,7 @@ if ("Clasificacion" %in% names(coded_socio)) {
       else cat("No significant pairs after Tukey.\n")
     } else {
       w <- oneway.test(Score_Ethics~Clasificacion,data=coded_socio,var.equal=FALSE)
-      # [v2] Effect size for Welch ANOVA: omega-squared (Field, 2013).
+      # Effect size for Welch ANOVA: omega-squared (Field, 2013).
       df_b <- as.integer(round(w$parameter[1]))
       cs   <- coded_socio[!is.na(coded_socio$Score_Ethics) &
                             !is.na(coded_socio$Clasificacion), ]
@@ -539,7 +505,7 @@ if ("Clasificacion" %in% names(coded_socio)) {
       omega2 <- round((ss_b - df_b*ms_w) / (ss_t + ms_w), 3)
       cat(sprintf("Welch ANOVA (scores): F(%.1f,%.1f)=%.2f, p=%.3f, omega2=%.3f\n",
                   w$parameter[1], w$parameter[2], w$statistic, w$p.value, omega2))
-      cat("[v2] omega2 is the reported effect size (robust to unequal n/variance).\n")
+      cat("omega2 is the reported effect size (robust to unequal n/variance).\n")
       games <- tryCatch({
         if (requireNamespace("rstatix", quietly=TRUE))
           rstatix::games_howell_test(cs, Score_Ethics ~ Clasificacion)
@@ -562,7 +528,7 @@ if ("Clasificacion" %in% names(coded_socio)) {
 # Step 8 — Latent Class Analysis
 
 ```{r lca}
-# [v2] Indicator-selection rule, explicit and reproducible:
+# Indicator-selection rule, explicit and reproducible:
 #  (a) drop mutually-exclusive residual/near-zero categories that destabilize LCA
 #      (B6, L5, E3, E4 have prevalence < 2% and no discriminating power);
 #  (b) keep the substantive benefit/limitation/ethics/decision indicators.
@@ -589,7 +555,7 @@ cat(sprintf("LCA: %d obs, %d indicators\n\n", nrow(lca_data), ncol(lca_data)))
 
 formula_lca <- as.formula(paste("cbind(", paste(lca_cats, collapse=","), ") ~ 1"))
 
-# [v2] Scan 2..5 classes (was 2..4) so the 4-class choice is defensible.
+# Scan 2..5 classes so the 4-class choice is defensible.
 set.seed(2024)
 kmax <- 5
 fit_stats <- data.frame(N_classes=integer(0), BIC=numeric(0), AIC=numeric(0),
@@ -621,7 +587,7 @@ print(kable(fit_stats,
 
 best_k   <- fit_stats$N_classes[which.min(fit_stats$BIC)]
 best_mod <- lca_models[[as.character(best_k)]]
-cat(sprintf("\nBest by BIC: %d classes. [v2] If a larger k wins on BIC but yields a\n",
+cat(sprintf("\nBest by BIC: %d classes. If a larger k wins on BIC but yields a\n",
             best_k))
 cat("class < 5%% of the sample, prefer the more parsimonious, interpretable solution\n")
 cat("and state this in Methods (Nylund et al., 2007; Weller et al., 2020).\n\n")
@@ -634,7 +600,7 @@ if (!is.null(best_mod)) {
 
   lca_data$modal_class <- apply(best_mod$posterior, 1, which.max)
 
-  # [v2] Class sizes from MODAL assignment (counts + %), not mixing proportions.
+  # Class sizes from modal assignment (counts + %), not mixing proportions.
   modal_tab <- table(lca_data$modal_class)
   class_sizes_df <- data.frame(
     Class = as.integer(names(modal_tab)),
@@ -643,11 +609,11 @@ if (!is.null(best_mod)) {
   print(kable(class_sizes_df,
         caption="LCA class sizes (modal assignment) — USE THESE n and % everywhere",
         row.names=FALSE))
-  cat(sprintf("[v2] Percentages sum to %.1f%% (modal). Smallest class = %.1f%% (n=%d).\n",
+  cat(sprintf("Percentages sum to %.1f%% (modal). Smallest class = %.1f%% (n=%d).\n",
               sum(class_sizes_df$Pct),
               min(class_sizes_df$Pct),
               class_sizes_df$n[which.min(class_sizes_df$Pct)]))
-  cat("[v3] poLCA class NUMBERS are arbitrary across runs — identify each profile\n")
+  cat("poLCA class numbers are arbitrary across runs — identify each profile\n")
   cat("by its conditional-probability signature, not by its number (see Figure 3).\n\n")
 
   probs_df <- do.call(rbind, lapply(seq_along(best_mod$probs), function(j)
@@ -669,7 +635,7 @@ if (!is.null(best_mod)) {
   }))
   print(kable(scores_class, caption="AI Literacy scores by LCA class", row.names=FALSE))
 
-  # [v2] OMNIBUS test of score differences across profiles (was only described,
+  # Omnibus test of score differences across profiles,
   # never tested). Welch ANOVA on Score_Total + omega2.
   cs_lca <- coded_scores[!is.na(coded_scores$lca_class), ]
   cs_lca_f <- factor(cs_lca$lca_class)
@@ -681,7 +647,7 @@ if (!is.null(best_mod)) {
     df_b  <- nlevels(cs_lca_f) - 1
     ms_w  <- ss_w / (nrow(cs_lca) - nlevels(cs_lca_f))
     omega2_lca <- round((ss_b - df_b*ms_w)/((ss_b+ss_w) + ms_w), 3)
-    cat(sprintf("\n[v2] Score_Total across %d profiles: Welch F(%.1f, %.1f) = %.2f, p = %.3f, omega2 = %.3f\n",
+    cat(sprintf("\nScore_Total across %d profiles: Welch F(%.1f, %.1f) = %.2f, p = %.3f, omega2 = %.3f\n",
                 best_k, w_lca$parameter[1], w_lca$parameter[2],
                 w_lca$statistic, w_lca$p.value, omega2_lca))
     cat("Report this omnibus test before describing the profile ordering.\n")
@@ -692,19 +658,18 @@ if (!is.null(best_mod)) {
 ---
 
 ```{r figura-lca, fig.width=14, fig.height=12, dpi=300}
-# [v2] Figure 3 now reads DYNAMICALLY from the fitted model:
+# Figure 3 reads dynamically from the fitted model:
 #  - Panel B scores from `scores_class`
 #  - Panel A probabilities from `best_mod$probs`
 #  - class sizes/labels from modal assignment
-# No hard-coded numbers (v1 hard-coded 7.8% and BIC=3446.9 in the caption).
+# All values (class percentages, BIC, entropy) are read from the fitted objects.
 
 stopifnot(exists("scores_class"), exists("best_mod"), exists("class_sizes_df"))
 
-# [v3] Assign profile labels by CONTENT, not by class number.
-# poLCA orders classes arbitrarily across runs, so a fixed 1->label map breaks
-# whenever the seed/data/version changes (as it did between v2 renders). We derive
-# each class's label from its conditional-probability signature on the decision/
-# ethics block. Definitions:
+# Assign profile labels by content, not by class number.
+# poLCA orders classes arbitrarily across runs, so a fixed 1->label map is not
+# reliable. We derive each class's label from its conditional-probability
+# signature on the decision/ethics block. Definitions:
 #   reflective-ethical    : high D1 (reflective) AND high E2 (responsible use)
 #   reflective-pragmatic  : high D1 (reflective) AND E5 dominant (no explicit ethics)
 #   instrumental-silent   : high D2 (instrumental) AND E5 dominant
@@ -735,7 +700,7 @@ if (anyDuplicated(prof_label)) {
           paste(sprintf("%s=%s", names(prof_label), prof_label), collapse="; "),
           ". Inspect the conditional-probability table and adjust label_class().")
 }
-cat("[v3] Auto-assigned profile labels (class number -> label):\n")
+cat("Auto-assigned profile labels (class number -> label):\n")
 print(prof_label)
 cat("\nVerify against the conditional-probability table above before using Figure 3.\n\n")
 
@@ -860,7 +825,7 @@ print(fig3)
 
 ggsave("Figure3_LCA_Profiles.png", plot = fig3,
        width = 14, height = 12, dpi = 300, bg = "white")
-cat(sprintf("Figure 3 saved. [v2] caption should read: 4-class solution (n_valid = %d, BIC = %.1f, entropy = %.3f).\n",
+cat(sprintf("Figure 3 saved. Caption should read: 4-class solution (n_valid = %d, BIC = %.1f, entropy = %.3f).\n",
             sum(cls$n), min(fit_stats$BIC), entropy_R2(best_mod)))
 ```
 
@@ -939,12 +904,12 @@ print(lapply(best_sens$probs, function(m) round(m, 2)))
 # Step 9 — Triangulation
 
 ```{r triangulation}
-# [v3] Triangulation corrects FDR over its own family of 5 comparisons (the
+# Triangulation corrects FDR over its own family of 5 comparisons (the
 # five dimensions). It is independent of the family of 8 from Step 6.
 
 tri_dims <- list(
   list(dim="Knowledge",   score="Score_Knowledge",   qual="B2"),
-  list(dim="Ethics",      score="Score_Ethics",       qual="D1"),  # [v2] D1, not E1
+  list(dim="Ethics",      score="Score_Ethics",       qual="D1"),
   list(dim="Attitude",    score="Score_Attitude",     qual="D1"),
   list(dim="Application", score="Score_Application",  qual="B1"),
   list(dim="Innovation",  score="Score_Innovation",   qual="D1")
@@ -976,11 +941,10 @@ kable(tri_table,
       row.names=FALSE)
 cat(sprintf("\nConvergence: %d / %d dimensions (FDR-corrected)\n",
             sum(tri_table$Convergence=="Converge"), nrow(tri_table)))
-cat("\n[v2] NARRATIVE CONSEQUENCE for the manuscript:\n")
+cat("\nNarrative consequence for the manuscript:\n")
 cat("- Ethics converges with the qualitative signal via REFLECTIVE USE (D1),\n")
 cat("  not via explicit ethical mention (E1/E2 are rare: the 'ethical paradox').\n")
-cat("- Rewrite the triangulation paragraph accordingly; the convergence count\n")
-cat("  and which dimensions converge come from THIS table, not v1's.\n")
+cat("- The convergence count and which dimensions converge come from this table.\n")
 ```
 
 ---
