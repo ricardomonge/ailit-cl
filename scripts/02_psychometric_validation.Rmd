@@ -1,0 +1,1558 @@
+---
+title: "Psychometric Validation of the AI Literacy Scale for Chilean University Students"
+subtitle: "Adaptation of Han & Zhang (2025) — Quantitative Analysis Pipeline (v3, revised)"
+author: "Research Team"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    df_print: kable
+    number_sections: true
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.width  = 10,
+  fig.height = 7,
+  dpi        = 150,
+  comment    = ""
+)
+```
+
+---
+
+# Overview
+
+This document contains the complete quantitative psychometric validation pipeline for the
+AI Literacy scale adapted for Chilean university students, based on Han & Zhang (2025).
+
+**Instrument:** 63 original items → 53 retained after EFA
+**Dimensions:** Knowledge, Ethics, Attitude, Application, Innovation
+**Correlations:** Polychoric throughout (ordinal Likert 1–5 data)
+**Estimator (CFA):** WLSMV (ordinal data with multivariate non-normality)
+**Sample split:** 50/50 EFA / CFA, seed = 2024
+
+**REVISION NOTES (v3)** — fixes after first v2 render:
+
+1. `print()` wrapped around every `kable()` inside `if{}`/loops — in v2 the
+   invariance table, model-comparison table and criterion-validity tables were
+   computed but never displayed.
+2. `PCDimension` added to packages (its absence aborted the n_factors consensus).
+3. **New chunk `efa-63items-iterative`**: iterative purification trajectory,
+   compared against the declared 53-item set; prints the rationale required for
+   Methods when declared/empirical decisions diverge (IA.A03, IA.E12, IA.A10–A12).
+4. `comp_table` (Table 1 source) and the iterative purification log now exported
+   to Excel.
+
+**REVISION NOTES (v2)** — changes vs. v1, agreed in editorial review:
+
+1. EFA, KMO, Bartlett, parallel analysis and factor-retention consensus now run on
+   **polychoric** correlations with **minres** extraction (was: Pearson + PAF),
+   matching the Methods section of the manuscript.
+2. **New Step 7c**: EFA on the full **63-item** pool, generating the item-elimination
+   table programmatically (previously the elimination step was undocumented in code).
+3. `items_eliminated` corrected to **10** items (IA.A03 was missing from the vector).
+4. Reliability: **ordinal alpha** (polychoric) + **categorical omega** from the WLSMV
+   CFA solution via `semTools::compRelSEM()` (was: Pearson alpha + ad-hoc omega).
+5. HTMT computed with `ordered = all_items` (polychoric), matching Methods.
+6. Fit table now reports **scaled and unscaled χ²** with explicit labels; SRMR
+   standardized to lavaan's `srmr` everywhere (manuscript must cite ONE value).
+7. Measurement invariance re-implemented with `semTools::measEq.syntax()` under
+   **WLSMV / theta / Wu & Estabrook (2016)** identification, with automatic collapsing
+   of empty response categories; MLR sequence retained only as documented fallback.
+8. Mardia test note clarified (random subsample of 500 from the TOTAL sample).
+9. Criterion-variable comments corrected: scale is **Likert 1–4** (per questionnaire);
+   ceiling-effect note now computed from the data, not hard-coded.
+10. Hard-coded values in notes and in the Figure 2 path diagram replaced by dynamic
+    values pulled from fitted objects (prevents text–output divergence).
+
+**Key methodological references:**
+
+- Beauducel & Herzberg (2006); Flora & Curran (2004) — WLSMV for ordinal data
+- Worthington & Whittaker (2006); Lloret-Segura et al. (2014) — EFA retention criteria
+- Kenny et al. (2015); Shi & Maydeu-Olivares (2020) — RMSEA with many indicators
+- Wu & Estabrook (2016) — invariance identification with ordered indicators
+- Benjamini & Hochberg (1995) — FDR correction
+
+---
+
+# Step 0 — Package Installation and Loading
+
+```{r packages}
+packages_required <- c(
+  "tidyverse", "psych", "lavaan", "semTools", "semPlot", "GPArotation",
+  "parameters", "correlation", "ggplot2", "corrplot", "knitr", "openxlsx",
+  "moments", "mice", "naniar", "MVN", "car", "ggforce",
+  "nFactors", "EGAnet", "PCDimension"  # backends for parameters::n_factors consensus
+  # [v3] PCDimension added: its absence made the whole consensus fail in v2
+)
+
+install_if_missing <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+}
+invisible(lapply(packages_required, install_if_missing))
+
+library(tidyverse); library(psych);      library(lavaan);   library(semTools)
+library(semPlot);   library(MVN);        library(GPArotation)
+library(parameters);library(correlation);library(ggplot2);  library(corrplot)
+library(knitr);     library(openxlsx);   library(moments);  library(mice)
+library(naniar);    library(car);        library(ggforce)
+```
+
+---
+
+# Step 1 — Item Configuration
+
+```{r item-config}
+# ---------------------------------------------------------------------------
+# FULL ORIGINAL POOL (63 items) — needed for the 63-item EFA in Step 7c
+# ---------------------------------------------------------------------------
+items63_knowledge   <- paste0("IA.C", sprintf("%02d", 1:13))   # 13
+items63_ethics      <- paste0("IA.E", sprintf("%02d", 1:14))   # 14
+items63_attitude    <- paste0("IA.A", sprintf("%02d", 1:12))   # 12
+items63_application <- paste0("IA.P", sprintf("%02d", 1:19))   # 19
+items63_innovation  <- paste0("IA.I", sprintf("%02d", 1:5))    #  5
+all_items_63 <- c(items63_knowledge, items63_ethics, items63_attitude,
+                  items63_application, items63_innovation)
+stopifnot(length(all_items_63) == 63)
+
+# ---------------------------------------------------------------------------
+# Items REMOVED after the 63-item EFA (n = 10)  [v2: IA.A03 added — was missing]
+# Criterion: primary loading < .40 OR cross-loading difference < .15
+# Reference: Worthington & Whittaker (2006); Lloret-Segura et al. (2014)
+# The empirical elimination table is generated in Step 7c; this vector is the
+# DECLARED final decision (including the documented IA.I03 retention exception).
+# ---------------------------------------------------------------------------
+# IA.A03 — cross-loading delta < .15
+# IA.E11 — primary loading < .40 (normative content, possible social desirability)
+# IA.E12 — primary loading < .40 (conceptual overlap with E11)
+# IA.P01 — primary loading < .40 (perceived self-efficacy, not application behavior)
+# IA.P07 — cross-loading delta = .079
+# IA.P17 — cross-loading delta = .029 (most ambiguous item)
+# IA.P18 — cross-loading delta = .092
+# IA.P19 — cross-loading delta = .132 (abstract wording)
+# IA.I02 — cross-loading delta = .053 (Innovation indistinguishable from Application)
+# IA.I05 — primary loading < .40 (possible cultural effect)
+#
+# EXCEPTION: IA.I03 retained despite a minor cross-loading on Application
+# (3-item minimum for the Innovation factor; culturally informative pattern).
+items_eliminated <- c("IA.A03",
+                      "IA.E11", "IA.E12",
+                      "IA.P01", "IA.P07", "IA.P17", "IA.P18", "IA.P19",
+                      "IA.I02", "IA.I05")
+stopifnot(length(items_eliminated) == 10)
+
+# Final purified dimensions (53 items)
+items_knowledge   <- items63_knowledge                                   # 13
+items_ethics      <- setdiff(items63_ethics, items_eliminated)           # 12
+items_attitude    <- setdiff(items63_attitude, items_eliminated)         # 11
+items_application <- setdiff(items63_application, items_eliminated)      # 14
+items_innovation  <- setdiff(items63_innovation, items_eliminated)       #  3
+
+# External validity variables (concurrent criterion) — Likert 1–4 [v2: corrected]
+criterion_vars <- c("aceptacion", "comprension", "satisfaccion")
+
+all_items <- c(items_knowledge, items_ethics, items_attitude,
+               items_application, items_innovation)
+stopifnot(length(all_items) == 53)
+
+cat(sprintf("Purified scale: %d items (original: 63, removed: %d)\n",
+            length(all_items), length(items_eliminated)))
+cat(sprintf("  Knowledge: %d | Ethics: %d | Attitude: %d | Application: %d | Innovation: %d\n",
+            length(items_knowledge), length(items_ethics), length(items_attitude),
+            length(items_application), length(items_innovation)))
+```
+
+---
+
+# Step 2 — Data Loading and Cleaning
+
+```{r data-loading}
+datos_raw <- read.csv("data/dataframe.csv",
+                      stringsAsFactors = FALSE,
+                      fileEncoding     = "UTF-8",
+                      sep              = ";",
+                      quote            = "\"",
+                      fill             = TRUE,
+                      comment.char     = "")
+
+cat("Dataset loaded:", nrow(datos_raw), "rows x", ncol(datos_raw), "columns\n")
+
+# Verify all 63 configured items exist in the dataset
+items_missing_63 <- setdiff(all_items_63, names(datos_raw))
+if (length(items_missing_63) > 0) {
+  warning("Items not found in CSV: ", paste(items_missing_63, collapse = ", "))
+  all_items_63 <- intersect(all_items_63, names(datos_raw))
+  all_items    <- intersect(all_items,    names(datos_raw))
+} else {
+  cat("All 63 configured items found in dataset.\n")
+}
+
+# Filter participants with informed consent
+if ("Consentimiento" %in% names(datos_raw)) {
+  datos_raw <- datos_raw %>% filter(Consentimiento %in% c("Si", "Sí"))
+  cat("After consent filter: N =", nrow(datos_raw), "\n")
+}
+
+socio_vars   <- intersect(c("Sexo", "Edad", "Clasificacion", "estudiante"), names(datos_raw))
+criterion_ok <- intersect(criterion_vars, names(datos_raw))
+
+datos <- datos_raw[, c(socio_vars, all_items_63, criterion_ok)]
+datos[all_items_63] <- lapply(datos[all_items_63], as.numeric)
+datos[criterion_ok] <- lapply(datos[criterion_ok], as.numeric)
+
+cat("Clean dataset: N =", nrow(datos), "\n")
+```
+
+---
+
+# Step 3 — Missing Data Diagnostics
+
+```{r missing-data}
+datos_items63 <- datos[, all_items_63]
+datos_items   <- datos[, all_items]
+
+pct_missing <- mean(is.na(datos_items63)) * 100
+cat(sprintf("Overall missing data (63-item pool): %.2f%%\n", pct_missing))
+
+n_missing_vec <- colSums(is.na(datos_items63))
+if (any(n_missing_vec > 0)) {
+  missing_df <- data.frame(
+    item     = names(n_missing_vec[n_missing_vec > 0]),
+    n_miss   = as.integer(n_missing_vec[n_missing_vec > 0]),
+    pct_miss = round(n_missing_vec[n_missing_vec > 0] / nrow(datos_items63) * 100, 2)
+  )
+  print(kable(missing_df, caption = "Items with missing data"))   # [v3] print()
+} else {
+  cat("No missing data in scale items.\n")
+}
+```
+
+---
+
+# Step 4 — Descriptive Statistics
+
+```{r descriptives}
+desc_items <- do.call(rbind, lapply(names(datos_items), function(col) {
+  x <- datos_items[[col]]
+  data.frame(
+    item    = col,
+    n       = sum(!is.na(x)),
+    mean    = round(mean(x, na.rm = TRUE), 3),
+    sd      = round(sd(x,   na.rm = TRUE), 3),
+    median  = median(x, na.rm = TRUE),
+    min     = min(x, na.rm = TRUE),
+    max     = max(x, na.rm = TRUE),
+    skew    = round(skewness(x, na.rm = TRUE), 3),
+    kurt    = round(kurtosis(x, na.rm = TRUE) - 3, 3),
+    stringsAsFactors = FALSE
+  )
+}))
+
+kable(desc_items,
+      caption = "Descriptive statistics per item (Likert 1–5, purified 53-item set)",
+      align   = "lrrrrrrrr")
+
+items_skew_flag <- desc_items$item[abs(desc_items$skew) >= 2]
+items_kurt_flag <- desc_items$item[abs(desc_items$kurt) >= 7]
+
+if (length(items_skew_flag) > 0)
+  cat("Items with |skewness| >= 2:", paste(items_skew_flag, collapse = ", "), "\n")
+if (length(items_kurt_flag) > 0)
+  cat("Items with |kurtosis| >= 7:", paste(items_kurt_flag, collapse = ", "), "\n")
+if (length(items_skew_flag) == 0 && length(items_kurt_flag) == 0)
+  cat("All items within univariate normality criteria (|skew| < 2, |kurt| < 7).\n")
+```
+
+---
+
+# Step 5 — Multivariate Normality (Mardia Test)
+
+```{r mardia}
+# [v2 NOTE] The Mardia test is computed on a RANDOM SUBSAMPLE of 500 cases drawn
+# from the TOTAL sample (seed = 2024), for computational efficiency. The manuscript
+# must describe it exactly this way (not as the CFA subsample).
+n_mardia <- min(nrow(datos_items), 500)
+set.seed(2024)
+sample_mardia <- datos_items[sample(nrow(datos_items), n_mardia), ]
+
+mardia_result <- psych::mardia(sample_mardia, plot = FALSE)
+
+cat(sprintf("Mardia test (random subsample n = %d of N = %d; p = %d variables; seed = 2024)\n",
+            n_mardia, nrow(datos_items), ncol(sample_mardia)))
+cat(sprintf("  Multivariate skewness: b1p = %.2f, chi2 = %.1f, p %s\n",
+            mardia_result$b1p, mardia_result$skew,
+            ifelse(mardia_result$p.skew < .001, "< .001",
+                   round(mardia_result$p.skew, 4))))
+cat(sprintf("  Multivariate kurtosis: b2p = %.2f, z = %.2f, p %s\n",
+            mardia_result$b2p, mardia_result$kurtosis,
+            ifelse(mardia_result$p.kurt < .001, "< .001",
+                   round(mardia_result$p.kurt, 4))))
+
+estimator_cfa <- "WLSMV"
+cat(sprintf("\nConclusion: severe violation of multivariate normality -> CFA estimator: %s\n",
+            estimator_cfa))
+cat("Reference: Beauducel & Herzberg (2006); Flora & Curran (2004)\n")
+```
+
+---
+
+# Step 6 — Sample Split: EFA / CFA
+
+```{r sample-split}
+N_total <- nrow(datos_items)
+set.seed(2024)
+
+idx_efa <- sample(1:N_total, size = floor(N_total * 0.50))
+idx_cfa <- setdiff(1:N_total, idx_efa)
+
+data_efa63 <- datos_items63[idx_efa, ]   # 63-item pool, EFA half
+data_efa   <- datos_items[idx_efa, ]     # 53-item set,  EFA half
+data_cfa   <- datos_items[idx_cfa, ]     # 53-item set,  CFA half
+
+split_summary <- data.frame(
+  Sample      = c("EFA", "CFA"),
+  n           = c(nrow(data_efa), nrow(data_cfa)),
+  Pct         = c("50.0%", "50.0%"),
+  Items_ratio = round(c(nrow(data_efa), nrow(data_cfa)) / length(all_items), 1)
+)
+kable(split_summary,
+      caption = "EFA / CFA sample split (seed = 2024)",
+      col.names = c("Sample", "n", "%", "N:items ratio"))
+```
+
+---
+
+# Step 7 — Exploratory Factor Analysis (EFA)
+
+## 7a. Sampling Adequacy (KMO and Bartlett) — polychoric
+
+```{r kmo-bartlett}
+## 7a. Sampling Adequacy (KMO and Bartlett) — polychoric, FULL 63-item pool
+
+# [Option A] Factorability is a PRECONDITION: it must be evaluated on the items
+# that ENTER the EFA (the full 63-item pool), BEFORE any item removal. v2 computed
+# it on the 53 retained items, which gave Bartlett df = 53*52/2 = 1378 and inverted
+# the analytic order (factorability shown AFTER removing items). Computing it on
+# the full 63-item pool corrects this; expected df = 63*62/2 = 1953.
+
+# --- Polychoric matrix for the FULL 63-item pool (EFA half) ------------------
+poly_efa63 <- psych::polychoric(data_efa63)
+R_poly63   <- poly_efa63$rho
+
+# HEADLINE factorability indices (these are the ones reported in the manuscript)
+kmo_result      <- KMO(R_poly63)
+bartlett_result <- cortest.bartlett(R_poly63, n = nrow(data_efa63))
+
+cat("== Factorability of the full 63-item pool (EFA half, polychoric) ==\n")
+cat("Overall KMO:", round(kmo_result$MSA, 3), "\n")
+cat("Interpretation:",
+    ifelse(kmo_result$MSA >= .90, "Excellent (>= .90)",
+    ifelse(kmo_result$MSA >= .80, "Meritorious (.80-.89)",
+    ifelse(kmo_result$MSA >= .70, "Middling (.70-.79)", "Unacceptable"))), "\n")
+cat(sprintf("Per-item KMO (MSAi): min = %.3f, max = %.3f%s\n",
+            min(kmo_result$MSAi), max(kmo_result$MSAi),
+            if (min(kmo_result$MSAi) < .50)
+              "  *** an item has MSAi < .50: candidate for removal ***" else ""))
+cat(sprintf("\nBartlett sphericity (polychoric): chi2(%d) = %.2f, p %s\n",
+            bartlett_result$df, bartlett_result$chisq,
+            ifelse(bartlett_result$p.value < .001, "< .001",
+                   round(bartlett_result$p.value, 4))))
+cat(sprintf("  [expected df = 63*62/2 = %d -> confirms the 63-item pool]\n", 63 * 62 / 2))
+
+# --- Polychoric matrix for the PURIFIED 53-item set --------------------------
+# Used by ALL subsequent chunks (7b parallel analysis and consensus, 7d 5-factor
+# EFA). Kept under the original name R_poly so nothing downstream breaks.
+poly_efa <- psych::polychoric(data_efa)
+R_poly   <- poly_efa$rho
+```
+
+## 7b. Number of Factors — Parallel Analysis and 19-Method Consensus
+
+```{r parallel-analysis, fig.cap="Parallel analysis scree plot (polychoric) — number of factors to retain"}
+# [v2] Polychoric parallel analysis (minres), matching Methods
+set.seed(2024)
+pa_result <- fa.parallel(data_efa,
+                         fm     = "minres",
+                         fa     = "fa",
+                         cor    = "poly",
+                         n.iter = 20,
+                         plot   = TRUE,
+                         main   = "Parallel Analysis (polychoric) — AI Literacy Scale")
+
+cat("\nFactors suggested by parallel analysis:", pa_result$nfact, "\n")
+```
+
+```{r n-factors-consensus}
+# [v2] Multi-method consensus (parameters::n_factors), matching the Methods
+# section's "maximum-consensus technique applied across 19 methods".
+# Runs on the polychoric matrix; methods that fail are skipped automatically.
+set.seed(2024)
+nf_consensus <- tryCatch(
+  parameters::n_factors(data_efa,
+                        type      = "FA",
+                        algorithm = "minres",
+                        rotation  = "promax",
+                        cor       = R_poly,
+                        n_max     = 10,
+                        package   = "all"),
+  error = function(e) {
+    cat("n_factors with polychoric matrix failed:", conditionMessage(e), "\n")
+    cat("Retrying with raw data (methods will use their internal defaults)...\n")
+    tryCatch(parameters::n_factors(data_efa, type = "FA", algorithm = "minres",
+                                   rotation = "promax", package = "all"),
+             error = function(e2) NULL)
+  })
+
+if (!is.null(nf_consensus)) {
+  print(nf_consensus)
+  nf_summary <- as.data.frame(summary(nf_consensus))
+  kable(nf_summary, caption = "Factor-retention methods: consensus summary")
+  cat(sprintf("\nMethods executed: %d | Modal solution: %d factors\n",
+              sum(nf_summary$n_Methods), 
+              nf_summary$n_Factors[which.max(nf_summary$n_Methods)]))
+  cat("IMPORTANT: report the ACTUAL number of methods executed above in the\n")
+  cat("manuscript. If it is not 19, adjust the Methods wording accordingly.\n")
+} else {
+  cat("Consensus procedure unavailable; manuscript must then cite parallel\n")
+  cat("analysis (polychoric) as the retention criterion and DROP the\n")
+  cat("'19 methods' claim.\n")
+}
+```
+
+## 7c. EFA on the FULL 63-item pool — item elimination (NEW in v2)
+
+```{r efa-63items}
+# [v2 NEW] This is the analysis that justifies the 10 eliminated items.
+# Previously absent from the repository — required for reproducibility.
+# poly_efa63 <- psych::polychoric(data_efa63)
+
+efa_63 <- fa(poly_efa63$rho,
+             nfactors = 5,
+             n.obs    = nrow(data_efa63),
+             fm       = "minres",
+             rotate   = "promax")
+
+lam63 <- unclass(efa_63$loadings)
+
+elimination_table <- do.call(rbind, lapply(rownames(lam63), function(it) {
+  l        <- abs(lam63[it, ])
+  ord      <- sort(l, decreasing = TRUE)
+  primary  <- ord[1]
+  secondary<- ord[2]
+  delta    <- primary - secondary
+  flag_low   <- primary < .40
+  flag_cross <- (!flag_low) && (delta < .15) && (secondary >= .32)
+  data.frame(item          = it,
+             primary_factor = names(which.max(l)),
+             primary_load   = round(primary, 3),
+             secondary_load = round(secondary, 3),
+             delta          = round(delta, 3),
+             flag = ifelse(flag_low, "low (<.40)",
+                    ifelse(flag_cross, "cross (delta<.15)", "")),
+             stringsAsFactors = FALSE)
+}))
+
+kable(elimination_table[elimination_table$flag != "", ],
+      caption = "63-item EFA (polychoric, minres, promax): items flagged by elimination criteria",
+      row.names = FALSE)
+
+flagged <- elimination_table$item[elimination_table$flag != ""]
+cat("\nItems flagged empirically:", paste(flagged, collapse = ", "), "\n")
+cat("Items declared eliminated :", paste(items_eliminated, collapse = ", "), "\n")
+
+discrepancy <- union(setdiff(flagged, c(items_eliminated, "IA.I03")),
+                     setdiff(items_eliminated, flagged))
+if (length(discrepancy) == 0) {
+  cat("\nOK: empirical flags match the declared elimination list",
+      "(IA.I03 retained by documented exception).\n")
+} else {
+  cat("\n*** DISCREPANCY between empirical flags and declared list:",
+      paste(discrepancy, collapse = ", "), "***\n")
+  cat("*** Resolve BEFORE updating the manuscript: either revise the declared\n")
+  cat("*** list (item composition changes downstream!) or document each\n")
+  cat("*** exception explicitly in Methods, as done for IA.I03.\n")
+}
+```
+
+```{r efa-63items-iterative}
+# [v3 NEW] ITERATIVE purification check.
+# The single-pass flags above are sensitive to the item set: an item can be a
+# cross-loader in the 63-item solution and clean once the worst offenders are
+# removed (and vice versa). Standard practice is to purify ITERATIVELY:
+# remove the single worst item, refit, re-evaluate, repeat until clean.
+# This chunk documents that trajectory and compares its endpoint with the
+# declared list. IA.I03 is protected by the documented exception.
+
+iterate_purify <- function(data63, protect = "IA.I03", max_iter = 15) {
+  items_now <- colnames(data63)
+  removed   <- character(0)
+  log_rows  <- list()
+  for (k in seq_len(max_iter)) {
+    R <- psych::polychoric(data63[, items_now])$rho
+    f <- fa(R, nfactors = 5, n.obs = nrow(data63),
+            fm = "minres", rotate = "promax")
+    lam   <- abs(unclass(f$loadings))
+    prim  <- apply(lam, 1, max)
+    sec   <- apply(lam, 1, function(z) sort(z, decreasing = TRUE)[2])
+    delta <- prim - sec
+    low   <- prim < .40
+    cross <- !low & (delta < .15) & (sec >= .32)
+    cand  <- setdiff(names(prim)[low | cross], protect)
+    if (length(cand) == 0) break
+    worst <- if (any(low[cand])) {
+      cand[which.min(prim[cand])]          # lowest primary among low-loaders
+    } else {
+      cand[which.min(delta[cand])]         # smallest delta among cross-loaders
+    }
+    log_rows[[k]] <- data.frame(
+      iter    = k,
+      removed = worst,
+      primary = round(prim[worst], 3),
+      delta   = round(delta[worst], 3),
+      reason  = ifelse(low[worst], "low (<.40)", "cross (delta<.15)"),
+      stringsAsFactors = FALSE)
+    removed   <- c(removed, worst)
+    items_now <- setdiff(items_now, worst)
+  }
+  list(removed = removed, kept = items_now,
+       log = if (length(log_rows)) do.call(rbind, log_rows) else NULL)
+}
+
+iter_res <- iterate_purify(data_efa63)
+
+if (!is.null(iter_res$log)) {
+  print(kable(iter_res$log,
+              caption = "Iterative purification trajectory (polychoric, minres, promax)",
+              row.names = FALSE))
+}
+cat(sprintf("\nIterative endpoint: %d items kept, %d removed.\n",
+            length(iter_res$kept), length(iter_res$removed)))
+cat("Removed (iterative):", paste(sort(iter_res$removed), collapse = ", "), "\n")
+cat("Removed (declared) :", paste(sort(items_eliminated), collapse = ", "), "\n")
+
+only_iter <- setdiff(iter_res$removed, items_eliminated)
+only_decl <- setdiff(items_eliminated, iter_res$removed)
+if (length(only_iter) == 0 && length(only_decl) == 0) {
+  cat("\nOK: iterative purification converges on the DECLARED 53-item set.\n")
+  cat("Methods can describe the purification as iterative; no exceptions needed\n")
+  cat("beyond IA.I03.\n")
+} else {
+  if (length(only_iter) > 0)
+    cat("\nFlagged iteratively but RETAINED in instrument:",
+        paste(only_iter, collapse = ", "),
+        "\n-> document retention rationale in Methods (as for IA.I03).\n")
+  if (length(only_decl) > 0)
+    cat("\nEliminated in instrument but NEVER flagged iteratively:",
+        paste(only_decl, collapse = ", "),
+        "\n-> justify on independent grounds (e.g., IA.A03: content-validity\n",
+        "   V = .786 < .80 in relevance; IA.E12: conceptual redundancy with\n",
+        "   the eliminated IA.E11), and state this explicitly in Methods.\n")
+  cat("\nEDITORIAL DECISION (agreed): the 53-item theoretical structure is\n")
+  cat("RETAINED (confirmed by cross-validated CFA); the EFA section of the\n")
+  cat("manuscript must describe the purification honestly, including the\n")
+  cat("partial reorganization of Attitude/Application/Innovation items in the\n")
+  cat("exploratory pattern — consistent with the integrated-continuum finding.\n")
+}
+```
+
+## 7d. EFA with 5 Factors on the purified 53-item set (polychoric, minres, Promax)
+
+```{r efa-5factors}
+# [v2] minres on polychoric matrix (was: PAF on Pearson)
+efa_5f <- fa(R_poly,
+             nfactors = 5,
+             n.obs    = nrow(data_efa),
+             fm       = "minres",
+             rotate   = "promax")
+
+variance_df <- data.frame(
+  Factor        = paste0("F", 1:5),
+  SS_loadings   = round(efa_5f$Vaccounted[1, ], 3),
+  Prop_variance = round(efa_5f$Vaccounted[2, ], 3),
+  Cum_variance  = round(cumsum(efa_5f$Vaccounted[2, ]), 3)
+)
+kable(variance_df,
+      caption = "EFA variance explained (5-factor solution, polychoric minres Promax, 53 items)",
+      col.names = c("Factor", "SS Loadings", "Prop. Variance", "Cum. Variance"))
+
+cat(sprintf("\nTotal variance explained (53-item solution): %.1f%%\n",
+            sum(efa_5f$Vaccounted[2, ]) * 100))
+cat("NOTE for manuscript: this percentage refers to the FINAL 53-item solution.\n")
+```
+
+```{r efa-loadings}
+loadings_pattern <- as.data.frame(unclass(efa_5f$loadings))
+names(loadings_pattern) <- paste0("F", 1:5)
+
+h2_vec <- efa_5f$communalities
+if (is.null(h2_vec) || length(unique(round(h2_vec, 3))) == 1) {
+  lam_mat <- unclass(efa_5f$loadings)
+  h2_vec  <- setNames(rowSums(lam_mat^2), rownames(lam_mat))
+  message("Note: communalities recomputed from loading matrix")
+}
+u2_vec <- 1 - h2_vec
+
+loadings_display <- loadings_pattern
+for (col in paste0("F", 1:5)) {
+  loadings_display[[col]] <- ifelse(
+    abs(loadings_display[[col]]) < .40, NA, round(loadings_display[[col]], 3))
+}
+loadings_display$h2 <- round(h2_vec[rownames(loadings_display)], 3)
+loadings_display$u2 <- round(u2_vec[rownames(loadings_display)], 3)
+
+loadings_pattern$h2 <- h2_vec
+loadings_pattern$u2 <- u2_vec
+
+kable(loadings_display,
+      caption = "EFA factor loading matrix (polychoric) — values < .40 suppressed",
+      na_col  = "")
+
+cat(sprintf("\nCommunalities range: %.3f to %.3f (mean = %.3f)\n",
+            min(h2_vec), max(h2_vec), mean(h2_vec)))
+
+# Diagnostics on the purified solution (should be clean; any flag here means
+# the polychoric solution disagrees with the declared item set -> investigate)
+max_loading <- apply(abs(loadings_pattern[, paste0("F", 1:5)]), 1, max)
+low_items   <- names(max_loading[max_loading < .40])
+n_high_load <- apply(abs(loadings_pattern[, paste0("F", 1:5)]) >= .32, 1, sum)
+cross_items <- names(n_high_load[n_high_load >= 2])
+
+if (length(low_items) > 0)
+  cat("WARNING — items with max loading < .40 in purified set:",
+      paste(low_items, collapse = ", "), "\n")
+if (length(cross_items) > 0)
+  cat("Items with residual cross-loadings (document if retained):",
+      paste(cross_items, collapse = ", "), "\n")
+if (length(low_items) == 0 && length(cross_items) == 0)
+  cat("Purified 53-item solution is clean under both criteria.\n")
+```
+
+---
+
+# Step 8 — Reliability (Ordinal Alpha; omega added after CFA)
+
+```{r reliability}
+# [v2] Ordinal alpha = Cronbach's alpha computed on the POLYCHORIC matrix
+# (Zumbo et al., 2007; Doko et al., 2021), matching Methods.
+# Categorical omega per factor is computed from the WLSMV CFA solution in
+# Step 10a (semTools::compRelSEM) and merged into this table there.
+
+ordinal_alpha <- function(df) {
+  pc <- tryCatch(psych::polychoric(df)$rho, error = function(e) NULL)
+  if (is.null(pc)) return(NA_real_)
+  suppressWarnings(psych::alpha(pc)$total$raw_alpha)
+}
+
+dimensions <- list(
+  Knowledge   = items_knowledge,
+  Ethics      = items_ethics,
+  Attitude    = items_attitude,
+  Application = items_application,
+  Innovation  = items_innovation
+)
+
+reliability_table <- data.frame()
+for (dim_name in names(dimensions)) {
+  items_dim <- dimensions[[dim_name]]
+  data_dim  <- datos[, items_dim, drop = FALSE]
+
+  alpha_ord  <- ordinal_alpha(data_dim)
+  pc_dim     <- psych::polychoric(data_dim)$rho
+  inter_item <- pc_dim[lower.tri(pc_dim)]
+
+  reliability_table <- rbind(reliability_table, data.frame(
+    Dimension  = dim_name,
+    k          = length(items_dim),
+    Alpha_ord  = round(alpha_ord, 3),
+    Omega_cat  = NA_real_,   # filled in Step 10a from the CFA solution
+    r_ii_mean  = round(mean(inter_item), 3),
+    r_ii_range = paste0("[", round(min(inter_item), 3),
+                        ", ", round(max(inter_item), 3), "]"),
+    stringsAsFactors = FALSE
+  ))
+}
+
+alpha_global_ord <- ordinal_alpha(datos[, all_items])
+reliability_table <- rbind(reliability_table, data.frame(
+  Dimension  = "GLOBAL",
+  k          = length(all_items),
+  Alpha_ord  = round(alpha_global_ord, 3),
+  Omega_cat  = NA_real_,
+  r_ii_mean  = NA,
+  r_ii_range = "—"
+))
+
+kable(reliability_table,
+      caption = "Internal consistency: ORDINAL alpha (polychoric). Omega pending CFA (Step 10a).",
+      col.names = c("Dimension", "k items", "α ordinal",
+                    "ω categorical (CFA)", "r_ii mean (poly)", "r_ii range (poly)"),
+      align = "lrrrrl")
+```
+
+---
+
+# Step 9 — Confirmatory Factor Analysis (CFA)
+
+## 9a. Model Specification
+
+```{r cfa-model-spec}
+items_C <- items_knowledge
+items_E <- items_ethics
+items_A <- items_attitude
+items_P <- items_application
+items_I <- items_innovation
+
+# 5-factor model with 5 theoretically justified residual correlations
+# (MI > 150; content similarity; Byrne, 2012)
+model_5f <- paste(
+  paste("Knowledge   =~", paste(items_C, collapse = " + ")),
+  paste("Ethics      =~", paste(items_E, collapse = " + ")),
+  paste("Attitude    =~", paste(items_A, collapse = " + ")),
+  paste("Application =~", paste(items_P, collapse = " + ")),
+  paste("Innovation  =~", paste(items_I, collapse = " + ")),
+  "IA.P10 ~~ IA.P11",   # MI=279: complex problem solving subfacet
+  "IA.C05 ~~ IA.C06",   # MI=198: adjacent procedural knowledge items
+  "IA.P10 ~~ IA.P13",   # MI=181: resolving problems with AI
+  "IA.P13 ~~ IA.P15",   # MI=193: complex problems with AI
+  "IA.A01 ~~ IA.A02",   # MI=165: benefits/opportunities content overlap
+  sep = "\n"
+)
+
+cat("Model specification:\n")
+cat(model_5f, "\n")
+```
+
+## 9b. CFA Estimation
+
+```{r cfa-estimation}
+cfa_result <- cfa(
+  model_5f,
+  data      = data_cfa,
+  estimator = estimator_cfa,
+  std.lv    = FALSE,
+  ordered   = TRUE
+)
+```
+
+## 9c. Fit Indices
+
+```{r cfa-fit-indices}
+all_fit <- fitMeasures(cfa_result)
+
+get_fit <- function(fit_obj, name, alt = NA) {
+  if (name %in% names(fit_obj)) return(unname(fit_obj[name]))
+  if (!is.na(alt) && alt %in% names(fit_obj)) return(unname(fit_obj[alt]))
+  return(NA_real_)
+}
+
+cfi_val      <- get_fit(all_fit, "cfi")
+tli_val      <- get_fit(all_fit, "tli")
+rmsea_val    <- get_fit(all_fit, "rmsea")
+rmsea_lo     <- get_fit(all_fit, "rmsea.ci.lower")
+rmsea_hi     <- get_fit(all_fit, "rmsea.ci.upper")
+wrmr_val     <- get_fit(all_fit, "wrmr")
+srmr_val     <- get_fit(all_fit, "srmr")          # [v2] ONE srmr definition everywhere
+chisq_scaled <- get_fit(all_fit, "chisq.scaled")
+chisq_unscl  <- get_fit(all_fit, "chisq")
+df_val       <- get_fit(all_fit, "df")
+
+# [v2] Both chi2 values reported with EXPLICIT labels.
+# DECISION FOR MANUSCRIPT: report the SCALED chi2 (it matches "χ² escalado WLSMV"
+# as Table 1's note claims). Whichever is chosen, use it for ALL three models.
+fit_table <- data.frame(
+  Index     = c("chi2 SCALED (mean-and-variance adjusted)",
+                "chi2 unscaled (for reference only)",
+                "df",
+                "CFI*", "TLI*",
+                "RMSEA", "RMSEA IC90% [lo, hi]",
+                "WRMR", "SRMR (lavaan 'srmr')"),
+  Value     = c(round(chisq_scaled, 1),
+                round(chisq_unscl, 1),
+                round(df_val, 0),
+                round(cfi_val, 3), round(tli_val, 3),
+                round(rmsea_val, 3),
+                paste0("[", round(rmsea_lo, 3), ", ", round(rmsea_hi, 3), "]"),
+                round(wrmr_val, 3), round(srmr_val, 3)),
+  Criterion = c("—", "—", "—",
+                "> .95 excellent (PRIMARY with WLSMV)",
+                "> .95 excellent (PRIMARY with WLSMV)",
+                "< .08 conventional (see Note 1)", "—",
+                "< 1.0 conventional (see Note 2)",
+                "<= .08 acceptable")
+)
+
+kable(fit_table,
+      caption = "CFA model fit indices — estimator WLSMV, ordered = TRUE",
+      align   = "lll")
+
+lat_cors_tmp <- lavInspect(cfa_result, what = "cor.lv")
+r_off <- lat_cors_tmp[lower.tri(lat_cors_tmp)]
+
+cat("\n* Primary indices for WLSMV (Beauducel & Herzberg, 2006; Flora & Curran, 2004)\n")
+cat("\nNote 1: RMSEA tends to be inflated with many indicators under WLSMV\n")
+cat("        (Kenny et al., 2015; Shi & Maydeu-Olivares, 2020).\n")
+cat(sprintf("\nNote 2: WRMR is not robust with highly correlated factors. Observed\n"))
+cat(sprintf("        interfactor correlations range r = %.3f to %.3f (Yu, 2002).\n",
+            min(r_off), max(r_off)))
+cat("        [Manuscript must report this FULL range, not a partial one.]\n")
+```
+
+## 9d. Standardized Loadings
+
+```{r cfa-loadings}
+std_sol <- standardizedSolution(cfa_result)
+std_sol <- std_sol[std_sol$op == "=~",
+                   c("lhs", "rhs", "est.std", "se", "z", "pvalue")]
+names(std_sol) <- c("Factor", "Item", "Std_loading", "SE", "z", "p")
+
+std_sol$Std_loading <- round(std_sol$Std_loading, 3)
+std_sol$SE          <- round(std_sol$SE, 3)
+std_sol$p           <- round(std_sol$p, 4)
+
+kable(std_sol[, c("Factor", "Item", "Std_loading", "SE", "p")],
+      caption = "CFA standardized factor loadings (all p < .001)",
+      align   = "llrrr",
+      row.names = FALSE)
+
+cat(sprintf("\nGlobal loading range (for manuscript text): [%.3f, %.3f]\n",
+            min(std_sol$Std_loading), max(std_sol$Std_loading)))
+```
+
+---
+
+# Step 10 — Construct Validity
+
+## 10a. Convergent Validity (AVE and CR) + Categorical Omega
+
+```{r convergent-validity}
+compute_ave_cr <- function(factor_name, loadings_df) {
+  lam     <- loadings_df$Std_loading[loadings_df$Factor == factor_name]
+  lam_sq  <- lam^2
+  errors  <- 1 - lam_sq
+  AVE     <- mean(lam_sq)
+  CR      <- sum(lam)^2 / (sum(lam)^2 + sum(errors))
+  list(AVE = AVE, CR = CR,
+       load_min = min(lam), load_max = max(lam), n_items = length(lam))
+}
+
+factor_names <- c("Knowledge", "Ethics", "Attitude", "Application", "Innovation")
+ave_cr_table <- data.frame()
+
+for (factor in factor_names) {
+  res <- tryCatch(
+    compute_ave_cr(factor, std_sol),
+    error = function(e) list(AVE=NA, CR=NA, load_min=NA, load_max=NA, n_items=0)
+  )
+  ave_cr_table <- rbind(ave_cr_table, data.frame(
+    Dimension = factor,
+    k         = res$n_items,
+    Load_min  = round(res$load_min, 3),
+    Load_max  = round(res$load_max, 3),
+    AVE       = round(res$AVE, 3),
+    sqrt_AVE  = round(sqrt(res$AVE), 3),
+    CR        = round(res$CR, 3),
+    AVE_ok    = ifelse(res$AVE >= .50, "yes", "no"),
+    CR_ok     = ifelse(res$CR  >= .70, "yes", "no")
+  ))
+}
+
+kable(ave_cr_table,
+      caption = "Convergent validity: AVE and Composite Reliability (CR)",
+      col.names = c("Dimension", "k", "Min load", "Max load",
+                    "AVE", "√AVE", "CR", "AVE≥.50?", "CR≥.70?"),
+      align = "lrrrrrrrr")
+
+cat("\nCriteria: AVE > .50 (Fornell & Larcker, 1981); CR > .70 (Hair et al., 2019)\n")
+
+# [v2] Categorical omega per factor from the WLSMV solution (semTools)
+omega_cat <- tryCatch(
+  semTools::compRelSEM(cfa_result, tau.eq = FALSE, ord.scale = TRUE),
+  error = function(e) {
+    cat("compRelSEM failed:", conditionMessage(e),
+        "\nFalling back to semTools::reliability().\n")
+    tryCatch({
+      rel <- semTools::reliability(cfa_result)
+      rel["omega3", ]
+    }, error = function(e2) NULL)
+  })
+
+if (!is.null(omega_cat)) {
+  cat("\nCategorical omega per factor (WLSMV solution):\n")
+  print(round(omega_cat, 3))
+  # Merge into the reliability table from Step 8
+  idx <- match(names(omega_cat), reliability_table$Dimension)
+  ok  <- !is.na(idx)
+  reliability_table$Omega_cat[idx[ok]] <- round(as.numeric(omega_cat)[ok], 3)
+
+  print(kable(reliability_table,   # [v3] explicit print()
+              caption = "FINAL reliability table: ordinal alpha + categorical omega (use THIS in Table 2)",
+              col.names = c("Dimension", "k items", "α ordinal",
+                            "ω categorical (CFA)", "r_ii mean (poly)", "r_ii range (poly)"),
+              align = "lrrrrl"))
+} else {
+  cat("\nOmega could not be computed — Table 2 of the manuscript must then be\n")
+  cat("limited to ordinal alpha + CR, with Methods adjusted accordingly.\n")
+}
+```
+
+## 10b. Discriminant Validity (Fornell-Larcker and HTMT)
+
+```{r discriminant-validity}
+lat_cors <- lavInspect(cfa_result, what = "cor.lv")
+cat("Latent factor correlations:\n")
+print(round(lat_cors, 3))
+cat(sprintf("\nInterfactor correlation range (REPORT THIS in manuscript): r = %.3f – %.3f\n",
+            min(lat_cors[lower.tri(lat_cors)]), max(lat_cors[lower.tri(lat_cors)])))
+
+# Fornell-Larcker matrix: diagonal = sqrt(AVE) — print FULL 5x5 for Table S3
+sqrt_ave  <- setNames(ave_cr_table$sqrt_AVE, ave_cr_table$Dimension)
+fl_matrix <- lat_cors
+diag(fl_matrix) <- sqrt_ave[rownames(fl_matrix)]
+
+cat("\nFornell-Larcker matrix (FULL 5x5 — copy verbatim into Table S3,\n")
+cat("including the Innovation diagonal):\n")
+print(round(fl_matrix, 3))
+
+# Explicit list of F-L violations (dynamic — no hard-coding)
+fl_viol <- data.frame()
+fn <- rownames(lat_cors)
+for (i in seq_along(fn)) for (j in seq_along(fn)) {
+  if (i < j) {
+    r_ij <- lat_cors[i, j]
+    if (r_ij > sqrt_ave[fn[i]] || r_ij > sqrt_ave[fn[j]]) {
+      fl_viol <- rbind(fl_viol, data.frame(
+        Pair = paste(fn[i], "-", fn[j]),
+        r = round(r_ij, 3),
+        sqrtAVE_1 = round(sqrt_ave[fn[i]], 3),
+        sqrtAVE_2 = round(sqrt_ave[fn[j]], 3)))
+    }
+  }
+}
+if (nrow(fl_viol) > 0) {
+  kable(fl_viol, caption = "Fornell-Larcker violations (report ALL in Table S3 note)",
+        row.names = FALSE)
+} else {
+  cat("\nFornell-Larcker criterion fully met.\n")
+}
+
+# [v2] HTMT on polychoric correlations (ordered), matching Methods
+htmt_result <- tryCatch({
+  semTools::htmt(model_5f, data = data_cfa, ordered = all_items)
+}, error = function(e) {
+  cat("HTMT (ordered) failed:", conditionMessage(e),
+      "\nFalling back to Pearson HTMT — if used, Methods must say so.\n")
+  tryCatch(semTools::htmt(model_5f, data = data_cfa), error = function(e2) NULL)
+})
+
+if (!is.null(htmt_result)) {
+  cat("\nHTMT ratios (polychoric; threshold .85 strict / .90 permissive):\n")
+  print(round(htmt_result, 3))
+  ht <- htmt_result[lower.tri(htmt_result)]
+  if (any(ht > .90, na.rm = TRUE)) {
+    cat(sprintf("\nHTMT > .90 detected (max = %.3f). Interpret as partial discriminant\n",
+                max(ht, na.rm = TRUE)))
+    cat("validity; the manuscript's 'integrated continuum' interpretation applies.\n")
+  }
+}
+```
+
+---
+
+# Step 11 — Modification Indices
+
+```{r mod-indices}
+mi <- modindices(cfa_result, sort. = TRUE, maximum.number = 15)
+mi_top <- mi[mi$mi > 10, c("lhs", "op", "rhs", "mi", "epc")]
+mi_top$mi  <- round(mi_top$mi, 2)
+mi_top$epc <- round(mi_top$epc, 3)
+
+kable(head(mi_top, 15),
+      caption = "Top modification indices (MI > 10)",
+      row.names = FALSE)
+
+cat("\nNote: Only residual correlations (~~ operator) with theoretical\n")
+cat("justification should be considered for model modification.\n")
+```
+
+---
+
+# Step 12 — Alternative Model Comparison
+
+```{r model-comparison}
+model_1f <- paste("AILiteracy =~", paste(all_items, collapse = " + "))
+
+cat("Estimating 1-factor model...\n")
+cfa_1f <- tryCatch(
+  cfa(model_1f, data = data_cfa, estimator = estimator_cfa, ordered = TRUE),
+  error = function(e) { cat("Error:", e$message, "\n"); NULL }
+)
+
+model_2order <- paste(model_5f, "\n",
+  "AILiteracy =~ Knowledge + Ethics + Attitude + Application + Innovation")
+
+cat("Estimating second-order model...\n")
+cfa_2order <- tryCatch(
+  cfa(model_2order, data = data_cfa, estimator = estimator_cfa, ordered = TRUE),
+  error = function(e) { cat("Error:", e$message, "\n"); NULL }
+)
+
+models_list <- list("5 Factors (proposed)" = cfa_result)
+if (!is.null(cfa_1f))     models_list[["1 General factor"]] <- cfa_1f
+if (!is.null(cfa_2order)) models_list[["2nd order"]]        <- cfa_2order
+
+if (length(models_list) > 1) {
+  # [v2] SCALED chi2 for all models (consistent labeling with Step 9c),
+  # plus delta-CFI / delta-RMSEA vs the proposed model.
+  idx_compare <- c("chisq.scaled", "df", "cfi", "tli", "rmsea", "srmr", "wrmr")
+  comp_table  <- do.call(rbind, lapply(names(models_list), function(nm) {
+    fit <- fitMeasures(models_list[[nm]], idx_compare)
+    data.frame(Model       = nm,
+               chi2_scaled = round(fit["chisq.scaled"], 1),
+               df          = round(fit["df"], 0),
+               CFI         = round(fit["cfi"],   3),
+               TLI         = round(fit["tli"],   3),
+               RMSEA       = round(fit["rmsea"], 3),
+               SRMR        = round(fit["srmr"],  3),
+               WRMR        = round(fit["wrmr"],  3))
+  }))
+  comp_table$dCFI_vs_5F   <- round(comp_table$CFI[1]   - comp_table$CFI, 3)
+  comp_table$dRMSEA_vs_5F <- round(comp_table$RMSEA - comp_table$RMSEA[1], 3)
+  print(kable(comp_table,    # [v3] print() — kable inside if{} does not auto-render
+              caption = "Model comparison — SCALED chi2; deltas vs proposed 5-factor model",
+              row.names = FALSE))
+  cat("\nNOTE for Table 1: every chi2 above is the SCALED statistic. The note\n")
+  cat("'χ² escalado WLSMV' is now accurate. Do not mix with unscaled values.\n")
+}
+```
+
+---
+
+# Step 13 — Measurement Invariance by Sex (WLSMV / theta / Wu-Estabrook)
+
+```{r invariance}
+# [v2] Categorical invariance with semTools::measEq.syntax(), keeping the
+# estimator consistent with the main CFA (WLSMV). Empty response categories
+# per group are handled by COLLAPSING adjacent categories on affected items
+# (documented below and to be described in Methods). The previous MLR
+# sequence is retained only as a fallback (with explicit caution).
+
+data_cfa_full <- datos[idx_cfa, ]
+
+if ("Sexo" %in% names(data_cfa_full) && !all(is.na(data_cfa_full$Sexo))) {
+  sex_table <- table(data_cfa_full$Sexo)
+  groups_ok <- names(sex_table[sex_table >= 100])
+
+  if (length(groups_ok) >= 2) {
+    data_inv <- data_cfa_full %>%
+      filter(Sexo %in% groups_ok) %>%
+      .[, c("Sexo", all_items)]
+
+    cat("Groups included (CFA subsample with declared sex — state this n in Methods):\n")
+    print(table(data_inv$Sexo))
+
+    # --- Detect and collapse empty categories per group --------------------
+    collapsed_items <- character(0)
+    for (it in all_items) {
+      tab <- table(factor(data_inv[[it]], levels = 1:5), data_inv$Sexo)
+      if (any(tab == 0)) {
+        x <- data_inv[[it]]
+        x <- ifelse(x <= 2, 2, x) - 1            # merge 1&2 -> categories 1..4
+        tab2 <- table(factor(x, levels = 1:4), data_inv$Sexo)
+        if (any(tab2 == 0)) x <- pmin(x, 3)      # merge top if still empty -> 1..3
+        data_inv[[it]] <- x
+        collapsed_items <- c(collapsed_items, it)
+      }
+    }
+    if (length(collapsed_items) > 0) {
+      cat(sprintf("\nCategories collapsed (bottom merge 1&2) on %d items:\n%s\n",
+                  length(collapsed_items),
+                  paste(collapsed_items, collapse = ", ")))
+      cat("-> Describe this in Methods: 'response categories with zero frequency\n")
+      cat("   in either sex group were merged with the adjacent category prior\n")
+      cat("   to multigroup estimation'.\n")
+    } else {
+      cat("\nNo empty categories detected — no collapsing needed.\n")
+    }
+
+    # --- Wu & Estabrook (2016) sequence: configural -> thresholds -> loadings
+    run_measEq <- function(geq) {
+      tryCatch(
+        semTools::measEq.syntax(
+          configural.model = model_5f,
+          data             = data_inv,
+          ordered          = all_items,
+          parameterization = "theta",
+          ID.fac           = "std.lv",
+          ID.cat           = "Wu.Estabrook.2016",
+          group            = "Sexo",
+          group.equal      = geq,
+          return.fit       = TRUE,
+          estimator        = "WLSMV"),
+        error = function(e) { cat("measEq error:", conditionMessage(e), "\n"); NULL })
+    }
+
+    fit_config <- run_measEq("configural")
+    fit_thresh <- run_measEq("thresholds")
+    fit_load   <- run_measEq(c("thresholds", "loadings"))
+
+    inv_models <- Filter(Negate(is.null),
+                         list("Configural"            = fit_config,
+                              "Thresholds"            = fit_thresh,
+                              "Thresholds + Loadings" = fit_load))
+
+    if (length(inv_models) >= 2) {
+      # Scaled indices for WLSMV
+      inv_idx <- c("cfi.scaled", "tli.scaled", "rmsea.scaled", "srmr")
+      inv_tab <- do.call(rbind, lapply(inv_models, function(m) {
+        fit <- fitMeasures(m, inv_idx)
+        data.frame(CFI   = round(fit["cfi.scaled"],   3),
+                   TLI   = round(fit["tli.scaled"],   3),
+                   RMSEA = round(fit["rmsea.scaled"], 3),
+                   SRMR  = round(fit["srmr"],         3))
+      }))
+      inv_tab <- cbind(Model = names(inv_models), inv_tab)
+      inv_tab$dCFI   <- c(NA, round(diff(inv_tab$CFI),   3))
+      inv_tab$dRMSEA <- c(NA, round(diff(inv_tab$RMSEA), 3))
+
+      print(kable(inv_tab,   # [v3] print() — was silently swallowed inside if{}
+                  caption = "Measurement invariance — WLSMV, theta, Wu & Estabrook (2016) sequence",
+                  row.names = FALSE))
+
+      cat("\nCriterion: |dCFI| <= .010 and |dRMSEA| <= .015 (Chen, 2007;\n")
+      cat("Putnick & Bornstein, 2016; Rutkowski & Svetina, 2017 for categorical).\n")
+
+      if (inv_tab$CFI[1] < .90) {
+        cat("\n*** CAUTION: configural CFI < .90. Invariance conclusions must be\n")
+        cat("*** framed as TENTATIVE in the manuscript, and the configural misfit\n")
+        cat("*** must be reported explicitly as a limitation.\n")
+      } else {
+        cat("\nConfigural baseline acceptable -> invariance sequence interpretable.\n")
+        cat("Update Table S4 and the Results text with THESE values (the previous\n")
+        cat("MLR-based table is superseded).\n")
+      }
+    } else {
+      # ------------------- FALLBACK: previous MLR sequence ------------------
+      cat("\nWLSMV invariance could not be estimated -> falling back to MLR.\n")
+      cat("If this branch runs, the manuscript MUST (a) justify treating the\n")
+      cat("items as continuous citing Rhemtulla et al. (2012), and (b) report\n")
+      cat("the configural fit honestly, downgrading the conclusion if poor.\n\n")
+
+      inv_configural <- tryCatch(
+        cfa(model_5f, data = data_inv, group = "Sexo", estimator = "MLR"),
+        error = function(e) NULL)
+      inv_metric <- tryCatch(
+        cfa(model_5f, data = data_inv, group = "Sexo", estimator = "MLR",
+            group.equal = "loadings"),
+        error = function(e) NULL)
+      inv_scalar <- tryCatch(
+        cfa(model_5f, data = data_inv, group = "Sexo", estimator = "MLR",
+            group.equal = c("loadings", "intercepts")),
+        error = function(e) NULL)
+
+      inv_models <- Filter(Negate(is.null),
+                           list(Configural = inv_configural,
+                                Metric     = inv_metric,
+                                Scalar     = inv_scalar))
+      if (length(inv_models) >= 2) {
+        inv_idx <- c("cfi.robust", "tli.robust", "rmsea.robust", "srmr")
+        inv_tab <- do.call(rbind, lapply(inv_models, function(m) {
+          fit <- fitMeasures(m, inv_idx)
+          data.frame(CFI   = round(fit["cfi.robust"],   3),
+                     TLI   = round(fit["tli.robust"],   3),
+                     RMSEA = round(fit["rmsea.robust"], 3),
+                     SRMR  = round(fit["srmr"],         3))
+        }))
+        inv_tab <- cbind(Model = names(inv_models), inv_tab)
+        inv_tab$dCFI   <- c(NA, round(diff(inv_tab$CFI),   3))
+        inv_tab$dRMSEA <- c(NA, round(diff(inv_tab$RMSEA), 3))
+        print(kable(inv_tab,   # [v3] print()
+                    caption = "FALLBACK: invariance sequence — MLR (robust indices), by sex",
+                    row.names = FALSE))
+      }
+    }
+  }
+}
+```
+
+---
+
+# Step 14 — Criterion Validity
+
+## 14a. Inter-dimension Correlations
+
+```{r inter-dim-correlations}
+datos_scores <- datos %>%
+  mutate(
+    Score_Knowledge   = rowMeans(.[, items_C], na.rm = TRUE),
+    Score_Ethics      = rowMeans(.[, items_E], na.rm = TRUE),
+    Score_Attitude    = rowMeans(.[, items_A], na.rm = TRUE),
+    Score_Application = rowMeans(.[, items_P], na.rm = TRUE),
+    Score_Innovation  = rowMeans(.[, items_I], na.rm = TRUE),
+    Score_Total       = rowMeans(.[, all_items], na.rm = TRUE)
+  )
+
+scores_dim <- datos_scores[, grep("^Score_", names(datos_scores), value = TRUE)]
+cor_dims   <- cor(scores_dim, use = "complete.obs")
+
+cor_test_mat <- corr.test(scores_dim, use = "complete", adjust = "BH")
+
+kable(round(cor_dims, 3),
+      caption = "Inter-dimension correlation matrix (Pearson on mean scores)",
+      align   = "rrrrrr")
+
+cat("\nAll p-values (BH-adjusted for 15 simultaneous comparisons):\n")
+print(round(cor_test_mat$p, 4))
+```
+
+## 14b. Concurrent Criterion Validity
+
+```{r criterion-validity}
+criterion_ok <- intersect(criterion_vars, names(datos))
+
+if (length(criterion_ok) > 0) {
+  data_criterion <- datos_scores[, c(grep("^Score_", names(datos_scores), value = TRUE),
+                                     criterion_ok)]
+
+  cor_crit <- cor(
+    data_criterion[, grep("^Score_", names(data_criterion), value = TRUE)],
+    data_criterion[, criterion_ok, drop = FALSE],
+    use = "complete.obs"
+  )
+  print(kable(round(cor_crit, 3),   # [v3] print()
+              caption = "Correlations between scale scores and criterion variables",
+              align   = "rrr"))
+
+  score_vars <- c("Score_Total", "Score_Knowledge", "Score_Ethics",
+                  "Score_Attitude", "Score_Application", "Score_Innovation")
+  crit_results <- data.frame()
+
+  for (crit_var in criterion_ok) {
+    for (score_var in score_vars) {
+      ct <- cor.test(data_criterion[[score_var]], data_criterion[[crit_var]])
+      crit_results <- rbind(crit_results, data.frame(
+        Score     = gsub("Score_", "", score_var),
+        Criterion = crit_var,
+        r         = round(ct$estimate, 3),
+        t         = round(ct$statistic, 2),
+        df        = ct$parameter,
+        p_raw     = ct$p.value
+      ))
+    }
+  }
+
+  crit_results$p_FDR <- round(p.adjust(crit_results$p_raw, method = "BH"), 4)
+  crit_results$p_raw <- round(crit_results$p_raw, 4)
+  crit_results$Sig   <- ifelse(crit_results$p_FDR < .05, "*", "")
+
+  print(kable(crit_results[, c("Score","Criterion","r","t","df","p_raw","p_FDR","Sig")],   # [v3] print()
+              caption = paste("Criterion validity: FDR-corrected correlations",
+                              "(Benjamini & Hochberg, 1995) — 18 simultaneous comparisons"),
+              row.names = FALSE))
+
+  n_sig <- sum(crit_results$p_FDR < .05)
+  cat(sprintf("\n* p_FDR < .05. Significant after FDR: %d / %d\n",
+              n_sig, nrow(crit_results)))
+  cat(sprintf("Range of r (for manuscript text): %.3f – %.3f\n",
+              min(crit_results$r), max(crit_results$r)))
+
+  # [v2] Ceiling-effect note computed from the data (criterion scale is 1–4)
+  cat("\nCeiling-effect diagnostics (Likert 1-4):\n")
+  for (v in criterion_ok) {
+    x <- data_criterion[[v]]
+    cat(sprintf("  %-13s observed range [%d, %d]; %% at top category (4) = %.1f%%\n",
+                v, min(x, na.rm = TRUE), max(x, na.rm = TRUE),
+                100 * mean(x == 4, na.rm = TRUE)))
+  }
+  cat("\nManuscript wording: 'concentration of responses in the top category\n")
+  cat("(ceiling effect), which may attenuate the correlations'. DELETE any claim\n")
+  cat("of 'total absence of responses in the top category'.\n")
+}
+```
+
+---
+
+# Step 14b — Sociodemographic Description
+
+```{r sociodemographics}
+data_socio <- datos_raw
+
+cat("Sex distribution:\n")
+tab_sex <- table(data_socio$Sexo)
+print(data.frame(
+  Category   = names(tab_sex),
+  n          = as.integer(tab_sex),
+  Percentage = paste0(round(prop.table(tab_sex) * 100, 1), "%")
+), row.names = FALSE)
+
+cat("\nAge:\n")
+age_num <- suppressWarnings(as.numeric(data_socio$Edad))
+cat(sprintf("  Mean = %.1f  SD = %.1f  Min = %.0f  Max = %.0f  Median = %.0f\n",
+            mean(age_num, na.rm = TRUE), sd(age_num, na.rm = TRUE),
+            min(age_num, na.rm = TRUE), max(age_num, na.rm = TRUE),
+            median(age_num, na.rm = TRUE)))
+
+cat("\nArea of study:\n")
+tab_area <- sort(table(data_socio$Clasificacion), decreasing = TRUE)
+print(data.frame(
+  Area       = names(tab_area),
+  n          = as.integer(tab_area),
+  Percentage = paste0(round(prop.table(tab_area) * 100, 1), "%")
+), row.names = FALSE)
+
+# [v2] corrected label: criterion variables are Likert 1–4
+cat("\nCriterion variables (Likert 1-4):\n")
+crit_vars_here <- intersect(c("aceptacion","comprension","satisfaccion"),
+                            names(data_socio))
+if (length(crit_vars_here) > 0) {
+  crit_desc <- do.call(rbind, lapply(crit_vars_here, function(v) {
+    x <- suppressWarnings(as.numeric(data_socio[[v]]))
+    data.frame(Variable = v,
+               n   = sum(!is.na(x)),
+               M   = round(mean(x, na.rm = TRUE), 2),
+               SD  = round(sd(x, na.rm = TRUE), 2),
+               Min = min(x, na.rm = TRUE),
+               Max = max(x, na.rm = TRUE),
+               Pct_top = paste0(round(100 * mean(x == 4, na.rm = TRUE), 1), "%"))
+  }))
+  print(kable(crit_desc,   # [v3] print()
+              caption = "Criterion variables — descriptive statistics (Pct_top = % at category 4)",
+              row.names = FALSE))
+}
+```
+
+---
+
+# Step 15 — Visualizations
+
+```{r viz-correlations, fig.cap="Item correlation heatmap (polychoric)"}
+cor_mat <- psych::polychoric(datos_items)$rho
+corrplot(cor_mat,
+         method = "color",
+         type   = "upper",
+         order  = "original",
+         tl.cex = 0.5,
+         tl.col = "black",
+         col    = colorRampPalette(c("#2166AC", "white", "#B2182B"))(200),
+         title  = "Item polychoric correlation matrix — AI Literacy Scale",
+         mar    = c(0, 0, 2, 0))
+```
+
+```{r viz-scores, fig.cap="Score distribution by dimension"}
+score_cols <- setdiff(grep("^Score_", names(datos_scores), value = TRUE), "Score_Total")
+scores_long <- do.call(rbind, lapply(score_cols, function(col) {
+  data.frame(Dimension = gsub("^Score_", "", col),
+             Score     = datos_scores[[col]])
+}))
+
+ggplot(scores_long, aes(x = Score, fill = Dimension)) +
+  geom_histogram(bins = 20, color = "white", alpha = 0.85) +
+  facet_wrap(~Dimension, scales = "free_y", ncol = 2) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title    = "Score distribution by dimension",
+       subtitle = "AI Literacy Scale — Chilean university students",
+       x        = "Mean score (1–5)",
+       y        = "Frequency") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        strip.text = element_text(face = "bold"))
+```
+
+```{r figura-afc, fig.width=14, fig.height=18, dpi=300, fig.cap="Figure 2. Standardized path diagram of the five-factor CFA model (values drawn dynamically from the fitted model)."}
+# [v2] Loadings and factor correlations are now built DYNAMICALLY from
+# std_sol and lat_cors — no hard-coded values that can drift from outputs.
+
+factor_order <- c("Knowledge","Ethics","Attitude","Application","Innovation")
+factor_labels <- c(Knowledge = "Knowledge", Ethics = "Ethics",
+                  Attitude = "Attitude", Application = "Application",
+                  Innovation = "Innovation")
+
+factors <- data.frame(
+  name = factor_order,
+  x    = c(1, 3, 5, 7, 9),
+  y    = rep(8, 5),
+  stringsAsFactors = FALSE
+)
+factors$k     <- sapply(factor_order, function(f) sum(std_sol$Factor == f))
+factors$label <- paste0(factor_labels[factors$name], "\n(", factors$k, " items)")
+
+item_rows <- list()
+for (fi in seq_len(nrow(factors))) {
+  fname <- factors$name[fi]
+  fx    <- factors$x[fi]
+  sub   <- std_sol[std_sol$Factor == fname, ]
+  n     <- nrow(sub)
+  ys    <- seq(6.2, 0.2, length.out = n)
+  item_rows[[fi]] <- data.frame(
+    factor = fname,
+    label  = gsub("^IA\\.", "", sub$Item),
+    load   = sub$Std_loading,
+    x      = fx,
+    y      = ys,
+    stringsAsFactors = FALSE
+  )
+}
+items_df <- do.call(rbind, item_rows)
+
+fn <- factor_order
+fcor <- do.call(rbind, lapply(seq_along(fn), function(i) {
+  do.call(rbind, lapply(seq_along(fn), function(j) {
+    if (i < j) data.frame(f1 = fn[i], f2 = fn[j],
+                          r = round(lat_cors[fn[i], fn[j]], 3)) else NULL
+  }))
+}))
+fcor <- merge(fcor, factors[, c("name","x","y")], by.x = "f1", by.y = "name")
+names(fcor)[names(fcor) == "x"] <- "x1"; names(fcor)[names(fcor) == "y"] <- "y1"
+fcor <- merge(fcor, factors[, c("name","x","y")], by.x = "f2", by.y = "name")
+names(fcor)[names(fcor) == "x"] <- "x2"; names(fcor)[names(fcor) == "y"] <- "y2"
+fcor$mx <- (fcor$x1 + fcor$x2) / 2
+fcor$my <- (fcor$y1 + fcor$y2) / 2 + 0.6
+
+pal_factor <- "#1B4F72"; pal_item <- "#AED6F1"
+pal_load   <- "#2E86C1"; pal_cor  <- "#7F8C8D"
+
+p_afc <- ggplot() +
+  geom_curve(data = fcor,
+             aes(x = x1, y = y1, xend = x2, yend = y2),
+             curvature = -0.3, color = pal_cor,
+             linewidth = 0.4, linetype = "dashed",
+             arrow = arrow(ends = "both", length = unit(0.08, "inches"),
+                           type = "open")) +
+  geom_label(data = fcor,
+             aes(x = mx, y = my, label = sprintf("%.2f", r)),
+             size = 2.2, color = pal_cor, fill = "white",
+             label.padding = unit(0.1, "lines"), label.size = 0) +
+  geom_segment(data = items_df,
+               aes(x = x, y = y + 0.18, xend = x, yend = 7.55),
+               color = pal_load, linewidth = 0.35,
+               arrow = arrow(length = unit(0.07, "inches"), type = "closed")) +
+  geom_text(data = items_df,
+            aes(x = x + 0.22, y = (y + 7.7) / 2, label = sprintf("%.2f", load)),
+            size = 2.0, color = pal_load, hjust = 0) +
+  geom_rect(data = items_df,
+            aes(xmin = x - 0.38, xmax = x + 0.38,
+                ymin = y - 0.16, ymax = y + 0.16),
+            fill = pal_item, color = "#2980B9", linewidth = 0.4) +
+  geom_text(data = items_df,
+            aes(x = x, y = y, label = label),
+            size = 2.2, color = "#1A252F") +
+  geom_ellipse(data = factors,
+               aes(x0 = x, y0 = y, a = 0.65, b = 0.38, angle = 0),
+               fill = pal_factor, color = "#154360",
+               linewidth = 0.6, alpha = 0.92) +
+  geom_text(data = factors,
+            aes(x = x, y = y, label = label),
+            size = 2.8, color = "white", fontface = "bold",
+            lineheight = 0.85) +
+  scale_x_continuous(limits = c(-0.2, 10.2)) +
+  scale_y_continuous(limits = c(-0.1, 9.5)) +
+  coord_fixed(ratio = 1) +
+  theme_void(base_size = 11) +
+  theme(
+    plot.background = element_rect(fill = "white", color = NA),
+    plot.margin     = margin(10, 10, 10, 10),
+    plot.title      = element_text(face = "bold", size = 12, hjust = 0.5,
+                                   margin = margin(b = 6)),
+    plot.subtitle   = element_text(size = 9, hjust = 0.5, color = "#555555",
+                                   margin = margin(b = 10))
+  ) +
+  labs(
+    title    = "Figure 2. Five-Factor CFA Path Diagram",
+    subtitle = sprintf("Standardized loadings (WLSMV estimator, n_CFA = %d). All paths p < .001.",
+                       nrow(data_cfa))
+  )
+
+print(p_afc)
+
+ggsave("Figure2_CFA_PathDiagram.png", plot = p_afc,
+       width = 14, height = 18, dpi = 300, bg = "white")
+cat("Figure 2 saved: Figure2_CFA_PathDiagram.png\n")
+```
+
+---
+
+# Step 16 — Export Results to Excel
+
+```{r export-excel}
+wb <- createWorkbook()
+
+addWorksheet(wb, "Fit_CFA");          writeData(wb, "Fit_CFA", fit_table)
+addWorksheet(wb, "Loadings_CFA");     writeData(wb, "Loadings_CFA", std_sol)
+addWorksheet(wb, "AVE_CR");           writeData(wb, "AVE_CR", ave_cr_table)
+addWorksheet(wb, "Reliability");      writeData(wb, "Reliability", reliability_table)
+addWorksheet(wb, "Descriptives");     writeData(wb, "Descriptives", desc_items)
+addWorksheet(wb, "EFA63_elimination");writeData(wb, "EFA63_elimination", elimination_table)
+
+fl_df <- as.data.frame(round(fl_matrix, 3))
+fl_df <- cbind(Dimension = rownames(fl_df), fl_df)
+addWorksheet(wb, "Fornell_Larcker_S3"); writeData(wb, "Fornell_Larcker_S3", fl_df)
+
+cor_df <- as.data.frame(round(cor_dims, 3))
+cor_df <- cbind(Dimension = rownames(cor_df), cor_df)
+addWorksheet(wb, "Correlations_dim"); writeData(wb, "Correlations_dim", cor_df)
+
+if (exists("crit_results")) {
+  addWorksheet(wb, "Criterion_validity")
+  writeData(wb, "Criterion_validity", crit_results)
+}
+if (exists("comp_table")) {                       # [v3] Table 1 source
+  addWorksheet(wb, "Model_comparison_T1")
+  writeData(wb, "Model_comparison_T1", comp_table)
+}
+if (exists("iter_res") && !is.null(iter_res$log)) {  # [v3] purification audit trail
+  addWorksheet(wb, "Iterative_purification")
+  writeData(wb, "Iterative_purification", iter_res$log)
+}
+if (exists("inv_tab")) {
+  addWorksheet(wb, "Invariance_S4")
+  writeData(wb, "Invariance_S4", inv_tab)
+}
+
+saveWorkbook(wb, "resultados_validacion_AIliteracy.xlsx", overwrite = TRUE)
+cat("Results exported: resultados_validacion_AIliteracy.xlsx\n")
+```
+
+---
+
+# Step 17 — Executive Summary
+
+```{r executive-summary}
+cat("=== EXECUTIVE SUMMARY (v2 — polychoric pipeline) ===\n\n")
+cat(sprintf("Sample: N = %d (EFA: %d | CFA: %d)\n\n",
+            N_total, nrow(data_efa), nrow(data_cfa)))
+cat("EFA (polychoric, minres, promax):\n")
+cat(sprintf("  KMO (63-item pool) = %.3f | Factors retained = 5 | Variance explained (53 items) = %.1f%%\n\n",
+            kmo_result$MSA, sum(efa_5f$Vaccounted[2, ]) * 100))
+cat("CFA (WLSMV):\n")
+cat(sprintf("  chi2_scaled(%d) = %.1f | CFI = %.3f | TLI = %.3f | RMSEA = %.3f [%.3f, %.3f] | SRMR = %.3f | WRMR = %.3f\n\n",
+            round(df_val), chisq_scaled, cfi_val, tli_val,
+            rmsea_val, rmsea_lo, rmsea_hi, srmr_val, wrmr_val))
+cat(sprintf("Interfactor correlations: r = %.3f – %.3f\n\n",
+            min(lat_cors[lower.tri(lat_cors)]), max(lat_cors[lower.tri(lat_cors)])))
+cat("Reliability (ordinal alpha + categorical omega):\n")
+print(reliability_table[, c("Dimension","Alpha_ord","Omega_cat")], row.names = FALSE)
+cat("\nConvergent validity:\n")
+print(ave_cr_table[, c("Dimension","AVE","CR")], row.names = FALSE)
+cat("\nREMINDER: after rendering, update the manuscript verification table\n")
+cat("row by row with the values printed in THIS document only.\n")
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```

@@ -1,1 +1,539 @@
+---
+title: "Content Validity Analysis of the AI Literacy Scale"
+subtitle: "Expert Judgment Using Aiken's V — AI Literacy Scale Adaptation"
+author: "Research Team"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    df_print: kable
+    number_sections: true
+editor_options:
+  chunk_output_type: console
+---
 
+```{r setup, include=FALSE}
+# Global chunk options
+knitr::opts_chunk$set(
+  echo       = TRUE,     # Show code in output
+  warning    = FALSE,    # Suppress warnings
+  message    = FALSE,    # Suppress messages
+  fig.width  = 12,
+  fig.height = 8,
+  dpi        = 150,
+  comment    = ""
+)
+```
+
+---
+
+# Overview
+
+This document reports the content validity analysis of the AI Literacy scale
+adapted for Chilean university students, based on Han & Zhang (2025).
+
+Content validity was assessed through expert judgment using **Aiken's V coefficient**
+(Aiken, 1985), which quantifies the degree of agreement among judges regarding
+two dimensions of each item: **relevance** and **wording**.
+
+**Scale:** 4-point rating scale (1 = strongly disagree, 4 = strongly agree)  
+**Threshold:** V ≥ .80 acceptable for Q1 publication (Aiken, 1985; Merino-Soto & Livia-Segovia, 2009)  
+**Confidence interval:** 95% (Penfield & Giacobbi, 2004)  
+
+**Key methodological references:**
+
+- Aiken, L. R. (1985). Three coefficients for analyzing the reliability and
+  validity of ratings. *Educational and Psychological Measurement, 45*(1), 131–142.
+- Merino-Soto, C., & Livia-Segovia, J. (2009). Intervalos de confianza asimétricos
+  para el índice V de Aiken. *Psicothema, 21*(4), 659–664.
+- Penfield, R. D., & Giacobbi, P. R. (2004). Applying a score confidence interval
+  to Aiken's item content-relevance index. *Measurement in Physical Education and
+  Exercise Science, 8*(4), 213–225.
+
+---
+
+# Step 0 — Package Installation and Loading
+
+```{r packages}
+# Install packages if not available
+packages_required <- c(
+  "tidyverse",   # Data manipulation and visualization
+  "readr",       # CSV file reading
+  "gtsummary",   # Clean summary tables for reporting
+  "flextable",   # Table formatting for Word/PowerPoint
+  "ftExtra",     # Extensions for flextable customization
+  "labelled",    # Variable labels management
+  "gridExtra",   # Arrange multiple ggplot panels
+  "knitr",       # Table output in Rmd
+  "ggplot2"      # Graphics
+)
+
+install_if_missing <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+}
+invisible(lapply(packages_required, install_if_missing))
+
+# Load packages
+library(tidyverse)
+library(readr)
+library(gtsummary)
+library(flextable)
+library(ftExtra)
+library(labelled)
+library(gridExtra)
+library(knitr)
+library(ggplot2)
+```
+
+---
+
+# Step 1 — Data Loading
+
+```{r data-loading}
+# Load expert judge demographics
+# File: data/demo_judges.csv
+df <- read_csv("data/demo_judges.csv", show_col_types = FALSE)
+
+# Load expert ratings for Aiken's V calculation
+# File: data/data_Aiken_IA.csv
+# Expected columns: dimension, item_01, item_02, ..., item_N
+# Dimensions: "relevance" and "wording"
+df2 <- read_csv("data/data_Aiken_IA.csv", show_col_types = FALSE)
+
+cat(sprintf("Expert judges loaded: %d\n", nrow(df)))
+cat(sprintf("Items x dimensions in rating dataset: %d rows\n", nrow(df2)))
+cat(sprintf("Dimensions present: %s\n",
+            paste(unique(df2$dimension), collapse = ", ")))
+```
+
+---
+
+# Step 2 — Expert Judge Profile
+
+```{r judge-profile}
+# Assign variable labels for cleaner summary table display
+df <- df |>
+  labelled::set_variable_labels(
+    sex                    = "Sex",
+    academic_degree        = "Highest level of educational attainment",
+    specialization         = "Specialization",
+    professional_experience= "Professional background in higher education",
+    years_of_experience    = "Years of experience in higher education",
+    exp_in_inst_valid      = "Has had experience in the design and
+                              evaluation of assessment instruments"
+  )
+
+# Summary table of expert judge characteristics
+table_judges <- tbl_summary(
+  df,
+  type = list(years_of_experience ~ "continuous2"),
+  statistic = list(
+    all_continuous()  ~ c("{median} ({p25}, {p75})",
+                          "{mean} ({sd})",
+                          "{min}, {max}"),
+    all_categorical() ~ "{n} ({p}%)"
+  ),
+  digits = list(
+    all_continuous()  ~ 1,
+    all_categorical() ~ c(0, 1)
+  )
+) |>
+  modify_header(label = "Variable") |>
+  modify_caption("Table 1. Sociodemographic and Professional Profile of Expert Judges")
+
+# Display as flextable for HTML rendering
+table_judges |>
+  as_flex_table() |>
+  autofit()
+```
+
+---
+
+# Step 3 — Aiken's V Computation
+
+```{r aiken-functions}
+# ---------------------------------------------------------------------------
+# Aiken's V coefficient
+# Formula: V = sum(s) / (N * (k-1))
+# where s = rating - 1, N = number of raters, k = number of scale categories
+# Reference: Aiken (1985)
+# ---------------------------------------------------------------------------
+compute_aiken_v <- function(ratings, k) {
+  N <- length(ratings)
+  V <- sum(ratings - 1) / (N * (k - 1))
+  return(V)
+}
+
+# ---------------------------------------------------------------------------
+# 95% Confidence interval for Aiken's V
+# Uses the asymmetric CI formula from Penfield & Giacobbi (2004)
+# ---------------------------------------------------------------------------
+compute_aiken_ci <- function(V, n, k, confidence = 0.95) {
+  z          <- qnorm(1 - (1 - confidence) / 2)
+  sqrt_term  <- sqrt(4 * n * k * V * (1 - V) + z^2)
+  lower      <- (2 * n * k * V + z^2 - z * sqrt_term) / (2 * (n * k + z^2))
+  upper      <- (2 * n * k * V + z^2 + z * sqrt_term) / (2 * (n * k + z^2))
+  return(c(lower, upper))
+}
+```
+
+```{r aiken-compute}
+# Reshape to long format for item-level analysis
+lf2 <- df2 %>%
+  pivot_longer(cols = -dimension,
+               names_to  = "item",
+               values_to = "valor")
+
+# Scale parameters
+k          <- 4      # Number of response categories (4-point scale)
+confidence <- 0.95   # Confidence level for CI
+
+# Compute Aiken's V, mean rating, and 95% CI per item and dimension
+results <- lf2 %>%
+  group_by(dimension, item) %>%
+  summarise(
+    mean_rating = mean(valor),
+    V           = compute_aiken_v(valor, k),
+    n           = length(valor),
+    .groups     = "drop"
+  ) %>%
+  rowwise() %>%
+  mutate(
+    CI_lower = compute_aiken_ci(V, n, k, confidence)[1],
+    CI_upper = compute_aiken_ci(V, n, k, confidence)[2]
+  ) %>%
+  ungroup()
+
+# Compute score frequency counts (1 to 4) per item
+frequencies <- lf2 %>%
+  group_by(dimension, item, valor) %>%
+  summarise(freq = n(), .groups = "drop") %>%
+  pivot_wider(names_from  = valor,
+              values_from = freq,
+              values_fill = list(freq = 0))
+
+# Merge results with frequencies
+results_full <- results %>%
+  left_join(frequencies, by = c("dimension", "item")) %>%
+  mutate(across(any_of(as.character(1:4)), ~replace_na(.x, 0)))
+
+# Reorder columns: frequencies, mean, V, CI
+results_full <- results_full %>%
+  dplyr::select(dimension, item,
+                any_of(as.character(1:4)),
+                mean_rating, V, CI_lower, CI_upper) %>%
+  mutate(across(c(mean_rating, V, CI_lower, CI_upper), ~round(.x, 3)))
+
+cat(sprintf("Items computed: %d (across %d dimensions)\n",
+            nrow(results_full),
+            length(unique(results_full$dimension))))
+
+# Flag items below the V >= .80 threshold
+items_below <- results_full %>%
+  filter(V < .80) %>%
+  dplyr::select(dimension, item, V, CI_lower, CI_upper)
+
+if (nrow(items_below) > 0) {
+  cat(sprintf("\nItems with V < .80 (n = %d):\n", nrow(items_below)))
+  print(items_below, row.names = FALSE)
+} else {
+  cat("\nAll items meet the V >= .80 threshold.\n")
+}
+```
+
+---
+
+# Step 4 — Results by Dimension
+
+## 4a. Relevance
+
+```{r table-relevance}
+# Filter and display relevance dimension results
+tabla_relevance <- results_full %>%
+  filter(dimension == "relevance") %>%
+  dplyr::select(-dimension)
+
+kable(tabla_relevance,
+      caption = "Table 2. Content validity analysis — Relevance (Aiken's V, 95% CI)",
+      col.names = c("Item", "1", "2", "3", "4",
+                    "Mean", "V", "CI lower", "CI upper"),
+      align = "lrrrrrrrrr",
+      digits = 3)
+
+# Summary statistics for relevance
+cat(sprintf("\nRelevance — Summary:\n"))
+cat(sprintf("  V range:  %.3f – %.3f\n",
+            min(tabla_relevance$V), max(tabla_relevance$V)))
+cat(sprintf("  V mean:   %.3f\n", mean(tabla_relevance$V)))
+cat(sprintf("  Items V >= .80: %d / %d (%.0f%%)\n",
+            sum(tabla_relevance$V >= .80), nrow(tabla_relevance),
+            100 * mean(tabla_relevance$V >= .80)))
+```
+
+## 4b. Wording
+
+```{r table-wording}
+# Filter and display wording dimension results
+tabla_wording <- results_full %>%
+  filter(dimension == "wording") %>%
+  dplyr::select(-dimension)
+
+kable(tabla_wording,
+      caption = "Table 3. Content validity analysis — Wording (Aiken's V, 95% CI)",
+      col.names = c("Item", "1", "2", "3", "4",
+                    "Mean", "V", "CI lower", "CI upper"),
+      align = "lrrrrrrrrr",
+      digits = 3)
+
+# Summary statistics for wording
+cat(sprintf("\nWording — Summary:\n"))
+cat(sprintf("  V range:  %.3f – %.3f\n",
+            min(tabla_wording$V), max(tabla_wording$V)))
+cat(sprintf("  V mean:   %.3f\n", mean(tabla_wording$V)))
+cat(sprintf("  Items V >= .80: %d / %d (%.0f%%)\n",
+            sum(tabla_wording$V >= .80), nrow(tabla_wording),
+            100 * mean(tabla_wording$V >= .80)))
+```
+
+## 4c. Combined Summary
+
+```{r summary-combined}
+# Overall summary across both dimensions
+summary_overall <- results_full %>%
+  group_by(dimension) %>%
+  summarise(
+    n_items      = n(),
+    V_mean       = round(mean(V), 3),
+    V_min        = round(min(V), 3),
+    V_max        = round(max(V), 3),
+    n_above_80   = sum(V >= .80),
+    pct_above_80 = round(100 * mean(V >= .80), 1),
+    .groups = "drop"
+  )
+
+kable(summary_overall,
+      caption = "Table 4. Summary of Aiken's V by dimension",
+      col.names = c("Dimension", "N items", "V mean",
+                    "V min", "V max", "n V≥.80", "% V≥.80"),
+      align = "lrrrrrr")
+```
+
+---
+
+# Step 5 — Visualizations
+
+## 5. Visualization — Publication-ready figure
+
+```{r plot-aiken-final, fig.width=7.09, fig.height=8.66, dpi=300, fig.cap="Aiken's V with 95% CI by subscale and dimension. Green dashed line = .80 threshold (Aiken, 1985); dotted red line = .50 minimum for CI lower bound; bars = 95% CI (Penfield & Giacobbi, 2004). × = item below threshold."}
+
+# ── Palette ───────────────────────────────────────────────────────────────────
+clr_rel   <- "#185FA5"
+clr_wor   <- "#0F6E56"
+clr_below <- "#A32D2D"
+clr_v80   <- "#3B6D11"
+clr_v50   <- "#A32D2D"
+
+# ── Theme ─────────────────────────────────────────────────────────────────────
+theme_aiken <- function() {
+  theme_classic(base_size = 9, base_family = "Times New Roman") +
+    theme(
+      strip.background   = element_rect(fill = NA, color = "black"),  # (3) no fill, black frame only
+      strip.text         = element_text(face = "bold", size = 8.5),
+      axis.text.y        = element_text(size = 7.5),
+      axis.text.x        = element_text(size = 7.5),
+      axis.title.x       = element_text(size = 8.5, margin = margin(t = 6)),
+      axis.title.y       = element_blank(),
+      panel.grid.major.x = element_line(color = "#D3D1C7", linewidth = 0.3),
+      panel.spacing      = unit(0.4, "lines"),
+      legend.position    = "bottom",
+      legend.text        = element_text(size = 8),
+      legend.key.size    = unit(0.4, "cm"),
+      plot.title         = element_text(face = "bold", size = 10),
+      plot.subtitle      = element_text(size = 8.5, color = "grey40"),
+      plot.caption       = element_text(size = 7, color = "grey50", hjust = 0)
+    )
+}
+
+# ── Prepare data ──────────────────────────────────────────────────────────────
+plot_data <- results %>%
+  mutate(
+    subscale        = factor(str_extract(item, "^[A-Z]+")),
+    meets_threshold = V >= .80,
+    color_group     = if_else(meets_threshold, dimension, "below"),
+    # (4) CI lower bound cannot be smaller than .50
+    CI_lower        = pmax(CI_lower, 0.50)
+  )
+
+# ── Figure ────────────────────────────────────────────────────────────────────
+p_final <- ggplot(
+  plot_data,
+  aes(x = V, y = fct_rev(factor(item)), color = color_group, shape = meets_threshold)
+) +
+  geom_errorbarh(
+    aes(xmin = CI_lower, xmax = CI_upper),
+    height = 0.45, linewidth = 0.45, alpha = 0.75
+  ) +
+  geom_point(size = 1.8) +
+  geom_vline(xintercept = 0.80, color = clr_v80,
+             linetype = "dashed",  linewidth = 0.55) +
+  geom_vline(xintercept = 0.50, color = clr_v50,
+             linetype = "dotted", linewidth = 0.55, alpha = 0.6) +
+  # (1) V value in parentheses
+  geom_text(
+    aes(label = sprintf("(%.2f)", V), x = CI_upper + 0.01),
+    hjust = 0, size = 1.9, color = "grey30"
+  ) +
+  scale_color_manual(
+    values = c(relevance = clr_rel, wording = clr_wor, below = clr_below),
+    labels = c(relevance = "Relevance (V ≥ .80)",
+               wording   = "Wording (V ≥ .80)",
+               below     = "Below threshold (V < .80)"),
+    name = NULL
+  ) +
+  scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 4), guide = "none") +
+  facet_grid(
+    subscale ~ dimension,
+    scales   = "free_y",
+    space    = "free_y",
+    labeller = labeller(dimension = c(relevance = "Relevance", wording = "Wording"))
+  ) +
+  scale_x_continuous(
+    limits = c(0.35, 1.08),
+    breaks = c(0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    labels = c(".50", ".60", ".70", ".80", ".90", "1.00")
+  ) +
+  labs(
+    x        = "Aiken's V (point estimate with 95% CI)",
+#    title    = "Content Validity — Aiken's V by Subscale and Dimension",
+#    subtitle = "Dashed = .80 threshold · Dotted = .50 minimum for CI lower bound · Bars = 95% CI",
+    # (2) 14 judges
+#    caption  = "× = item below threshold; ● = item meeting threshold. n = 14 judges, k = 4 categories."
+  ) +
+  theme_aiken()
+
+p_final
+
+# ── Export ────────────────────────────────────────────────────────────────────
+ggsave("fig_aiken_v_content_validity.tiff",
+       plot = p_final, width = 18, height = 22,
+       units = "cm", dpi = 300, compression = "lzw")
+
+ggsave("fig_aiken_v_content_validity.pdf",
+       plot = p_final, width = 18, height = 22,
+       units = "cm", device = cairo_pdf)
+```
+---
+
+# Step 6 — Items Below Threshold
+
+```{r below-threshold}
+# Identify items that do not meet the V >= .80 criterion
+# These items were candidates for revision or elimination before EFA
+items_low_v <- results_full %>%
+  filter(V < .80) %>%
+  arrange(dimension, V) %>%
+  dplyr::select(dimension, item, V, CI_lower, CI_upper, mean_rating)
+
+if (nrow(items_low_v) > 0) {
+  kable(items_low_v,
+        caption = "Items with Aiken's V < .80 — candidates for revision",
+        col.names = c("Dimension", "Item", "V",
+                      "CI lower", "CI upper", "Mean rating"),
+        digits = 3,
+        row.names = FALSE)
+  cat(sprintf("\nTotal items below threshold: %d\n", nrow(items_low_v)))
+  cat("These items were reviewed qualitatively based on expert comments\n")
+  cat("prior to the exploratory factor analysis (EFA).\n")
+} else {
+  cat("All items met the V >= .80 criterion in both dimensions.\n")
+  cat("No items required revision based on content validity results.\n")
+}
+```
+
+---
+
+# Step 7 — Export Results to Excel
+
+```{r export}
+library(openxlsx)
+
+wb_cv <- createWorkbook()
+
+# Sheet 1: Full results
+addWorksheet(wb_cv, "Aiken_V_Full")
+writeData(wb_cv, "Aiken_V_Full", results_full)
+
+# Sheet 2: Relevance only
+addWorksheet(wb_cv, "Relevance")
+writeData(wb_cv, "Relevance", tabla_relevance)
+
+# Sheet 3: Wording only
+addWorksheet(wb_cv, "Wording")
+writeData(wb_cv, "Wording", tabla_wording)
+
+# Sheet 4: Summary
+addWorksheet(wb_cv, "Summary")
+writeData(wb_cv, "Summary", summary_overall)
+
+# Sheet 5: Items below threshold (if any)
+if (nrow(items_low_v) > 0) {
+  addWorksheet(wb_cv, "Items_below_threshold")
+  writeData(wb_cv, "Items_below_threshold", items_low_v)
+}
+
+saveWorkbook(wb_cv, "resultados_validacion_contenido.xlsx", overwrite = TRUE)
+cat("Results exported: resultados_validacion_contenido.xlsx\n")
+```
+
+---
+
+# Step 8 — Text for Paper
+
+```{r paper-text}
+# ---------------------------------------------------------------------------
+# Auto-generate text for the Methods section based on computed results
+# ---------------------------------------------------------------------------
+
+n_judges    <- nrow(df)
+n_items_rel <- nrow(tabla_relevance)
+n_items_wor <- nrow(tabla_wording)
+v_mean_rel  <- round(mean(tabla_relevance$V), 3)
+v_mean_wor  <- round(mean(tabla_wording$V), 3)
+v_min_rel   <- round(min(tabla_relevance$V), 3)
+v_min_wor   <- round(min(tabla_wording$V), 3)
+pct_rel     <- round(100 * mean(tabla_relevance$V >= .80), 1)
+pct_wor     <- round(100 * mean(tabla_wording$V >= .80), 1)
+
+cat("=== SUGGESTED TEXT FOR METHODS SECTION ===\n\n")
+cat(paste0(
+  "Content validity was assessed through expert judgment by ", n_judges,
+  " specialists in educational technology, artificial intelligence, and psychometrics. ",
+  "Each expert rated all ", n_items_rel, " items on two dimensions",
+  " (relevance and wording) using a 4-point scale (1 = strongly disagree, 4 = strongly agree). ",
+  "Agreement was quantified using Aiken's V coefficient (Aiken, 1985) ",
+  "with 95% asymmetric confidence intervals (Penfield & Giacobbi, 2004). ",
+  "The recommended threshold was V >= .80 (Merino-Soto & Livia-Segovia, 2009).\n\n",
+  "Results indicated strong expert agreement on both dimensions. ",
+  "For relevance, Aiken's V ranged from ", v_min_rel, " to 1.000 (M = ", v_mean_rel, "), ",
+  "with ", pct_rel, "% of items meeting the V >= .80 criterion. ",
+  "For wording, V ranged from ", v_min_wor, " to 1.000 (M = ", v_mean_wor, "), ",
+  "with ", pct_wor, "% of items meeting the threshold. ",
+  "Items below the criterion were reviewed qualitatively based on expert ",
+  "comments prior to the exploratory factor analysis.\n"
+))
+```
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
