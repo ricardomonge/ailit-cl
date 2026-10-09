@@ -27,6 +27,8 @@ ailit-cl/
 ├── LICENSE
 ├── .gitignore
 ├── project.Rproj
+├── data/
+│   └── data.csv                         # Anonymized quantitative data (open-ended responses excluded)
 └── scripts/
     ├── 01_content_validity.Rmd          # Content validity (Aiken's V, N = 14 judges)
     ├── 02_psychometric_validation.Rmd   # EFA/CFA, reliability, invariance (WLSMV)
