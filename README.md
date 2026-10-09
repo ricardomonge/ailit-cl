@@ -1,6 +1,6 @@
 # ailit-cl: AI Literacy Scale Validation in Chile
 
-> Reproducible R pipeline for the cross-cultural adaptation and psychometric validation of the *Artificial Intelligence Literacy Scale* (AILS) among Chilean university students, with mixed-methods triangulation of real-world AI-use narratives.
+> Reproducible R pipeline for the cross-cultural adaptation and psychometric validation of the *Artificial Intelligence Literacy Scale* (AILS) among Chilean university students, with mixed-methods triangulation of AI-use narratives.
 
 [![R](https://img.shields.io/badge/R-%3E%3D4.3-blue)](https://www.r-project.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
