@@ -1,9 +1,11 @@
 # ailit-cl: AI Literacy Scale Validation in Chile
+[![License: MIT](https://img.shields.io/badge/Code_License-MIT-yellow.svg)](https://github.com/ricardomonge/ailit-cl/blob/main/LICENSE)
+[![Data License: CC BY 4.0](https://img.shields.io/badge/Data_License-CC_BY_4.0-lightgrey.svg)](#data-policy)
+[![R Version](https://img.shields.io/badge/R-%3E%3D%204.3.0-276DC3.svg?logo=r&logoColor=white)](https://www.r-project.org/)
+[![Open Science](https://img.shields.io/badge/Open_Science-Open_Data_%26_Code-2ea44f.svg)](https://github.com/ricardomonge/ailit-cl)
+[![Reproducible](https://img.shields.io/badge/Reproducible-R_Markdown-blue.svg)](https://github.com/ricardomonge/ailit-cl)
 
 > Reproducible R pipeline for the cross-cultural adaptation and psychometric validation of the *Artificial Intelligence Literacy Scale* (AILS) among Chilean university students, with mixed-methods triangulation of AI-use narratives.
-
-[![R](https://img.shields.io/badge/R-%3E%3D4.3-blue)](https://www.r-project.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
